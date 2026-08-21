@@ -158,7 +158,7 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c, uint8_t APB1_freq_MHz)
 	i2c->TRISE &= ~(0x3F);
 	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * apb1_hz) + 1));
 
-	i2c->CR2 |= (0x3 << 8); // Enable ITERR, ITEVT
+	i2c->CR2 |= (0x7 << 8); // Enable ITERR, ITEVT, ITBUF
 	/*
 		NVIC vector positions.
 		I2C1: 31, 32
@@ -201,6 +201,7 @@ i2c_status_t i2c_start(i2c_handle_t *i2c_handle)
 	/*
 		Start the transmission request
 	*/
+	i2c_handle->next_step = I2C_TX_SLAVE_ADDRESS;
 	i2c_handle->i2c->CR1 |= (0x1 << 8);
 	return (I2C_OK);
 }

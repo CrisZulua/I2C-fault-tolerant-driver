@@ -20,8 +20,18 @@ typedef enum{
 	I2C_TX_WAIT_BTF,
 	I2C_RX_RSTART,
 	I2C_RX_SLAVE_ADDRESS,
-	I2C_RX_WAITING,
+	I2C_RX_ACTIVE,
+	I2C_COM_SUCCEDED,
+	I2C_COM_FAILED,
 } i2c_comm_state_t;
+
+typedef enum{
+	I2C_ERROR_CLEAR,
+	I2C_ERROR_DMA,
+	I2C_ERROR_AF,
+	I2C_ERROR_ARLO,
+	I2C_ERROR_BERR,
+} i2c_err_flag_t;
 
 typedef struct i2c_handle_s{
 	GPIO_TypeDef *sda_port;
@@ -29,7 +39,12 @@ typedef struct i2c_handle_s{
 	uint16_t sda_pin;
 	uint16_t scl_pin;
 	I2C_TypeDef	*i2c;
+	uint8_t slave_addr;
+	uint8_t slave_reg;
 	i2c_comm_state_t next_step;
+	i2c_err_flag_t err_flag;
+	uint8_t max_retrys;
+	uint8_t curr_retrys;
 } i2c_handle_t;
 
 typedef struct dma_handle_s
@@ -44,9 +59,12 @@ typedef struct dma_handle_s
 	uint16_t tx_nb_transfers;
 } dma_handle_t;
 
-void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle, uint8_t slave_adrs);
-void i2c_er_irq_handler(i2c_handle_t *i2c_handle);   // AF (NACK), BERR, ARLO, timeout-related
-void i2c_dma_tx_irq_handler(i2c_handle_t *i2c_handle); // TX stream TC/TE
-void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle); // RX stream TC/TE
+i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle,uint8_t APB1_freq_MHz);
+void i2c_start(i2c_handle_t *i2c_handle);
+void i2c_stop(i2c_handle_t *i2c_handle);
+void i2c_bus_recovery(i2c_handle_t *i2c_handle);
 
+void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);   // AF (NACK), BERR, ARLO, timeout-related
 #endif // I2C_DRIVER_H

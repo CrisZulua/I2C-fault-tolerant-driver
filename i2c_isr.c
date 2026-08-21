@@ -1,6 +1,22 @@
 #include "i2c_driver.h"
 
-void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle, uint8_t slave_adrs, uint8_t slave_reg)
+static void i2c_arm_rx_dma(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
+	// Differentiate between 1 byte transfer and multi-byte transfer
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+
+	// 1 byte reception, reset ACK and STOP generation at DMA TCI
+	if (dma_handle->rx_nb_transfers < 2)
+		i2c_handle->i2c->CR1 &= ~(0x1 << 10);
+	
+	// Disable ITBUFEN as rm0390 suggest. No TxE or RxNE interrupts generated. DMA takes control.
+	i2c_handle->i2c->CR2 &= ~(0x1 << 10);
+	rx_stream_dir->NDTR = dma_handle->rx_nb_transfers;
+	rx_stream_dir->M0AR = dma_handle->rx_buffer;
+	rx_stream_dir->CR |= 0x1; // Enable DMA
+}
+
+void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	uint32_t sr1 = i2c_handle->i2c->SR1;
 
@@ -10,45 +26,142 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle, uint
 			// SB -> now send address, controller now waiting for a write in DR
 			if (sr1 & 0x1)
 			{
-				i2c_handle->i2c->DR = (slave_adrs << 1) | 0;
+				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 0;
 				i2c_handle->next_step = I2C_TX_WRITE_REG;
 			}
 			break;
 		case I2C_TX_WRITE_REG:
 			// ADDR Address sended. clear flag and reading SR2. Write slave register
 			if (sr1 & 0x2)
-			{
 				(void)i2c_handle->i2c->SR2;
-				i2c_handle->i2c->DR = slave_reg;
+			// If TXE = 1, DR and shift register empty -> write in DR clears TXE
+			if (sr1 & 0x80)
+			{
+				i2c_handle->i2c->DR = i2c_handle->slave_reg;
 				i2c_handle->next_step = I2C_RX_RSTART;
 			}
 			break;
 		case I2C_RX_RSTART:
 			/*
-				TXE -> ACK pulse received
-				The new start condition will clear TXE
+				BTF -> ACK pulse received
+				The new start condition will clear BTF
 			*/
-			if (sr1 & 0x80)
+			if (sr1 & 0x4)
 			{
 				i2c_handle->i2c->CR1 |= (0x1 << 8); // Start
 				i2c_handle->next_step = I2C_RX_SLAVE_ADDRESS;
 			}
+			break;
 		case I2C_RX_SLAVE_ADDRESS:
 			// SB -> adress slave but this time to read
 			if (sr1 & 0x1)
-				i2c_handle->i2c->DR = (slave_adrs << 1) | 1;
+			{
+				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 1;
+				// Enable DMAEN before ADDR event. After sending the address no RxNE happens
+				i2c_handle->i2c->CR2 |= (0x1 << 11);
+			}
 
 			// ADDR -> Clear flag and arm RX DMA. In RX MODE there is no TXE.
 			if (sr1 & 0x2)
 			{
-				i2c_handle->next_step = I2C_RX_WAITING;
+				i2c_handle->next_step = I2C_RX_ACTIVE;
 				// If number of data transfers is 1, disable ACK and STOP at the DMA TCI
 				i2c_arm_rx_dma(i2c_handle, dma_handle);
 				(void)i2c_handle->i2c->SR2;
 			}
+			break;
 		default:
+			// Maybe this is a good place to check BTF, it can be cause by deadlock.
+			// So this will be an error trigger.
 			break;
 	}
-
-	
 }
+
+void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
+	const uint8_t dma_flag_base[4] = {0, 6, 16, 22};
+
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+	volatile uint32_t *dma_isr  = (volatile uint32_t *)(DMA1_BASE + 0x4 * (dma_handle->rx_stream / 4));
+	volatile uint32_t *dma_ifcr = (volatile uint32_t *)(DMA1_BASE + 0x8 + 0x4 * (dma_handle->rx_stream / 4));
+
+	uint8_t base = dma_flag_base[dma_handle->rx_stream % 4];
+	uint32_t teif_mask = (0x1 << (base + 3));
+	uint32_t tcif_mask = (0x1 << (base + 5));
+
+	// Transfer error (TEIF). Real bus-recovery hook goes here later —
+	// for now, clear this stream's flags and disable it so it doesn't
+	// sit half-configured for the next transaction.
+	if (*dma_isr & teif_mask)
+	{
+		*dma_ifcr = (0x3D << base); // clears FEIF|DMEIF|TEIF|HTIF|TCIF for this stream
+		rx_stream_dir->CR &= ~0x1;  // disable stream
+		i2c_handle->err_flag = I2C_ERROR_DMA; // TODO: route to real error/recovery state
+		return;
+	}
+
+	// Transfer complete, no errors — happy path.
+	if (*dma_isr & tcif_mask)
+	{
+		*dma_ifcr = tcif_mask; // write 1 to clear TCIF
+
+		rx_stream_dir->CR &= ~0x1; // disable stream, transfer is done
+
+		i2c_stop(i2c_handle);
+		// TODO: signal completion to the caller (flag or callback) + run checksum, stop timeout timer
+	}
+}
+
+void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
+	/*
+		I2C ERROR INTERRUPT
+		AF (NACK), BERR, ARLO
+		Do we check OVR just in case?
+	*/
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+	rx_stream_dir->CR &= ~0x1; // disable stream
+	while (rx_stream_dir->CR & 0x1); // Wait for DMA disable
+
+	if (i2c_handle->i2c->SR1 & (0x1 << 10))
+	{
+		/*
+			AF - Adress problem, this only triggers at controller transmitter mode, thats the only configuration
+			being used. Dont self resolve. STOP the transaction.
+		*/
+		i2c_handle->i2c->SR1 &= ~(0x1 << 10); // Clear flag
+		i2c_handle->err_flag = I2C_ERROR_AF;
+		i2c_stop(i2c_handle);
+	}
+	if (i2c_handle->i2c->SR1 & (0x1 << 9))
+	{
+		/*
+			ARLO - This driver supports single controller/master transactions, for this reason
+			an arbitration lost maybe a glitched or malfunctioning channel.
+		*/
+		i2c_handle->i2c->SR1 &= ~(0x1 << 9); // Clear flag
+		i2c_handle->err_flag = I2C_ERROR_ARLO;
+		i2c_stop(i2c_handle);
+	}
+	if (i2c_handle->i2c->SR1 & (0x1 << 8))
+	{
+		/*
+			BERR - Protocol-level anomalie. Abort the current transaction as data send may be corrupted.
+			Start the transaction for one retry max always checking timing respects the frecuency of read
+			request from master to slave.
+		*/
+		i2c_handle->i2c->SR1 &= ~(0x1 << 8);
+		if (i2c_handle->curr_retrys < i2c_handle->max_retrys)
+		{
+			// probably clean all the flags for dma before starting a new transaction
+			i2c_start(i2c_handle);
+		}
+		else
+		{
+			i2c_handle->err_flag = I2C_ERROR_BERR;
+			i2c_stop(i2c_handle);
+		}
+	}
+}   
+	
+// TODO: checksum, bus_recovery, timer activation and isr

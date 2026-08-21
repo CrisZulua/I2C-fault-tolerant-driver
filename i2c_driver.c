@@ -196,12 +196,22 @@ i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle,uint8_t
 	return (I2C_OK);
 }
 
-i2c_status_t i2c_start(i2c_handle_t *i2c_handle)
+void i2c_start(i2c_handle_t *i2c_handle)
 {
 	/*
 		Start the transmission request
 	*/
 	i2c_handle->next_step = I2C_TX_SLAVE_ADDRESS;
+	i2c_handle->err_flag = I2C_ERROR_CLEAR;
 	i2c_handle->i2c->CR1 |= (0x1 << 8);
-	return (I2C_OK);
+}
+
+void i2c_stop(i2c_handle_t *i2c_handle)
+{
+	i2c_handle->i2c->CR1 |= (0x1 << 9);   // STOP
+	i2c_handle->i2c->CR2 &= ~(0x1 << 11); // DMAEN = 0
+	i2c_handle->i2c->CR2 &= ~(0x1 << 12); // LAST = 0
+	i2c_handle->i2c->CR1 |= (0x1 << 10);  // ACK = 1
+	i2c_handle->i2c->CR2 |= (0x1 << 10);  // ITBUFEN = 1
+	i2c_handle->next_step = I2C_COM_SUCCESS;
 }

@@ -1,5 +1,23 @@
 #include "i2c_driver.h"
 
+static i2c_status_t i2c_tim14_setup(i2c_handle_t *i2c_handle)
+{
+	RCC->APB1ENR |= (0x1 << 8); // Feed clock
+
+	TIM14->PSC = (APB1_TIM_CLK_HZ / TIMER_TICK_HZ) - 1; // divide down to TIMER_TICK_HZ
+	TIM14->ARR = TIMEOUT_CLK_CNT;                       // timeout = TIMEOUT_CLK_CNT / TIMER_TICK_HZ seconds
+
+	TIM14->CR1 |= (0x1 << 7); // ARPE
+	TIM14->CR1 |= (0x1 << 2); // URS: interrupt request at counter overflow only
+	TIM14->EGR |= 0x1;        // force an update to load PSC/ARR into shadow registers immediately
+	TIM14->SR &= ~0x1;        // clear any spurious UIF set by the EGR update above
+	TIM14->DIER |= 0x1;       // update interrupt enable
+
+	NVIC->ISER[1] |= (0x1 << (45 - 32));
+
+	return (I2C_OK);
+}
+
 static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 {
 	/*
@@ -140,23 +158,20 @@ static i2c_status_t i2c_GPIO_AF(GPIO_TypeDef *port, uint16_t pin)
 	return (I2C_OK);
 }
 
-static i2c_status_t i2c_setup(I2C_TypeDef *i2c, uint8_t APB1_freq_MHz)
+static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 {
-	uint32_t apb1_hz = 0;
-
 	if (i2c != I2C1 && i2c != I2C2 && i2c != I2C3)
 		return (I2C_ERROR);
-	if (APB1_freq_MHz > 50 || APB1_freq_MHz < 2)
+	if (APB1_TIM_CLK_HZ > MAX_APB1_CLK_HZ || APB1_TIM_CLK_HZ < MIN_APB1_CLK_HZ)
 		return (I2C_ERROR);
 	i2c->CR1 &= ~(0x1); // Disable peripheral
 	i2c->CR1 |= (1 << 10); // Enable ACK
 	i2c->CR2 &= ~(0x3F);
-	apb1_hz = APB1_freq_MHz * 1000000UL;
-	i2c->CR2 |= APB1_freq_MHz;
+	i2c->CR2 |= (APB1_TIM_CLK_HZ / 1000000UL);
 	i2c->CCR &= ~(0x0FFF);
-	i2c->CCR |= (0x0FFF & (apb1_hz / (2 * F_SCL)));
+	i2c->CCR |= (0x0FFF & (APB1_TIM_CLK_HZ / (2 * F_SCL)));
 	i2c->TRISE &= ~(0x3F);
-	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * apb1_hz) + 1));
+	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * APB1_TIM_CLK_HZ) + 1));
 
 	i2c->CR2 |= (0x7 << 8); // Enable ITERR, ITEVT, ITBUF
 	/*
@@ -179,7 +194,7 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c, uint8_t APB1_freq_MHz)
 	return (I2C_OK);
 }
 
-i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle,uint8_t APB1_freq_MHz)
+i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	if (i2c_enable_clock(i2c_handle->i2c) != I2C_OK)
 		return (I2C_UNAVAILABLE);
@@ -191,9 +206,19 @@ i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle,uint8_t
 		return (I2C_GPIO_CONFIG_ERROR);
 	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)
 		return (I2C_DMA_CONFIG_ERROR);
-	if (i2c_setup(i2c_handle->i2c, APB1_freq_MHz) != I2C_OK)
+	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
+		return (I2C_TIM_CONFIG_ERROR);
+	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
 		return (I2C_UNAVAILABLE);
 	return (I2C_OK);
+}
+
+void i2c_start_init(i2c_handle_t *i2c_handle)
+{
+	i2c_handle->state = I2C_TX_SLAVE_ADDRESS;
+	i2c_handle->err_flag = I2C_ERROR_CLEAR;
+	TIM14->CR1 |= 0x1; // Enable TIMEOUT
+	i2c_handle->i2c->CR1 |= (0x1 << 8);
 }
 
 void i2c_start(i2c_handle_t *i2c_handle)
@@ -201,9 +226,15 @@ void i2c_start(i2c_handle_t *i2c_handle)
 	/*
 		Start the transmission request
 	*/
-	i2c_handle->next_step = I2C_TX_SLAVE_ADDRESS;
-	i2c_handle->err_flag = I2C_ERROR_CLEAR;
-	i2c_handle->i2c->CR1 |= (0x1 << 8);
+	i2c_handle->curr_retrys = 0;
+	i2c_start_init(i2c_handle);
+}
+
+void i2c_stop_timer(void)
+{
+	TIM14->CR1 &= ~(0x1);				  // Stop timer
+	TIM14->EGR |= 0x1;					  // Re-initialize the CNT.
+	TIM14->SR &= ~0x1;
 }
 
 void i2c_stop(i2c_handle_t *i2c_handle)
@@ -213,5 +244,20 @@ void i2c_stop(i2c_handle_t *i2c_handle)
 	i2c_handle->i2c->CR2 &= ~(0x1 << 12); // LAST = 0
 	i2c_handle->i2c->CR1 |= (0x1 << 10);  // ACK = 1
 	i2c_handle->i2c->CR2 |= (0x1 << 10);  // ITBUFEN = 1
-	i2c_handle->next_step = I2C_COM_SUCCESS;
+}
+i2c_status_t i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
+	/*
+		Main public entry point.
+	*/
+	if (dma_handle->rx_buffer == 0 || dma_handle->rx_nb_transfers == 0)
+		return (I2C_ERROR);
+
+	// Refuse to start a new transaction while one is already in flight.
+	if (i2c_handle->state != I2C_IDLE)
+		return (I2C_UNAVAILABLE);
+
+	i2c_start(i2c_handle); // arms timer, sets state, issues START
+
+	return (I2C_OK); // transaction INITIATED, not complete — async, caller polls state
 }

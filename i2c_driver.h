@@ -5,6 +5,14 @@
 #include "stm32f446xx.h"
 #define F_SCL 100000 // 100 kHz Standard Mode
 #define MAX_RISE_SM 0.000001f // 1us
+#define TIMEOUT_CLK_CNT 65535 // TIM14 Auto-reload value
+#define MAX_APB1_CLK_HZ 90000000UL
+#define MIN_APB1_CLK_HZ 90000000UL
+
+/* SNIPPET OF .h — define these to match your CubeMX clock config */
+#define APB1_TIM_CLK_HZ   50000000UL  // TIM14 input clock — see note below
+#define TIMER_TICK_HZ     10000UL     // 10 kHz -> 100 us per tick
+#define TIMEOUT_CLK_CNT   300         // e.g. 300 * 100us = 30 ms timeout, tune to your bus
 
 typedef enum{
 	I2C_OK,
@@ -12,17 +20,17 @@ typedef enum{
 	I2C_UNAVAILABLE,
 	I2C_GPIO_CONFIG_ERROR,
 	I2C_DMA_CONFIG_ERROR,
+	I2C_TIM_CONFIG_ERROR,
 } i2c_status_t;
 
 typedef enum{
+	I2C_IDLE,
 	I2C_TX_SLAVE_ADDRESS,
 	I2C_TX_WRITE_REG,
 	I2C_TX_WAIT_BTF,
 	I2C_RX_RSTART,
 	I2C_RX_SLAVE_ADDRESS,
 	I2C_RX_ACTIVE,
-	I2C_COM_SUCCEDED,
-	I2C_COM_FAILED,
 } i2c_comm_state_t;
 
 typedef enum{
@@ -41,7 +49,7 @@ typedef struct i2c_handle_s{
 	I2C_TypeDef	*i2c;
 	uint8_t slave_addr;
 	uint8_t slave_reg;
-	i2c_comm_state_t next_step;
+	i2c_comm_state_t state;
 	i2c_err_flag_t err_flag;
 	uint8_t max_retrys;
 	uint8_t curr_retrys;
@@ -59,12 +67,15 @@ typedef struct dma_handle_s
 	uint16_t tx_nb_transfers;
 } dma_handle_t;
 
-i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle,uint8_t APB1_freq_MHz);
+i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+void i2c_start_init(i2c_handle_t *i2c_handle);
 void i2c_start(i2c_handle_t *i2c_handle);
 void i2c_stop(i2c_handle_t *i2c_handle);
-void i2c_bus_recovery(i2c_handle_t *i2c_handle);
+void i2c_stop_timer(void);
+// void i2c_bus_recovery(i2c_handle_t *i2c_handle); // TODO
 
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);   // AF (NACK), BERR, ARLO, timeout-related
+void i2c_tim_irq_handler(i2c_handle_t *i2c_handle);
 #endif // I2C_DRIVER_H

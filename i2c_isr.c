@@ -20,14 +20,14 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	uint32_t sr1 = i2c_handle->i2c->SR1;
 
-	switch (i2c_handle->next_step)
+	switch (i2c_handle->state)
 	{
 		case I2C_TX_SLAVE_ADDRESS:
-			// SB -> now send address, controller now waiting for a write in DR
+			// SB -> controller now waiting for a write in DR, send slave address
 			if (sr1 & 0x1)
 			{
-				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 0;
-				i2c_handle->next_step = I2C_TX_WRITE_REG;
+				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 0; // Write
+				i2c_handle->state = I2C_TX_WRITE_REG;
 			}
 			break;
 		case I2C_TX_WRITE_REG:
@@ -38,7 +38,7 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			if (sr1 & 0x80)
 			{
 				i2c_handle->i2c->DR = i2c_handle->slave_reg;
-				i2c_handle->next_step = I2C_RX_RSTART;
+				i2c_handle->state = I2C_RX_RSTART;
 			}
 			break;
 		case I2C_RX_RSTART:
@@ -49,7 +49,7 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			if (sr1 & 0x4)
 			{
 				i2c_handle->i2c->CR1 |= (0x1 << 8); // Start
-				i2c_handle->next_step = I2C_RX_SLAVE_ADDRESS;
+				i2c_handle->state = I2C_RX_SLAVE_ADDRESS;
 			}
 			break;
 		case I2C_RX_SLAVE_ADDRESS:
@@ -64,7 +64,7 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			// ADDR -> Clear flag and arm RX DMA. In RX MODE there is no TXE.
 			if (sr1 & 0x2)
 			{
-				i2c_handle->next_step = I2C_RX_ACTIVE;
+				i2c_handle->state = I2C_RX_ACTIVE;
 				// If number of data transfers is 1, disable ACK and STOP at the DMA TCI
 				i2c_arm_rx_dma(i2c_handle, dma_handle);
 				(void)i2c_handle->i2c->SR2;
@@ -89,14 +89,12 @@ void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	uint32_t teif_mask = (0x1 << (base + 3));
 	uint32_t tcif_mask = (0x1 << (base + 5));
 
-	// Transfer error (TEIF). Real bus-recovery hook goes here later —
-	// for now, clear this stream's flags and disable it so it doesn't
-	// sit half-configured for the next transaction.
 	if (*dma_isr & teif_mask)
 	{
 		*dma_ifcr = (0x3D << base); // clears FEIF|DMEIF|TEIF|HTIF|TCIF for this stream
 		rx_stream_dir->CR &= ~0x1;  // disable stream
-		i2c_handle->err_flag = I2C_ERROR_DMA; // TODO: route to real error/recovery state
+		while (rx_stream_dir->CR & 0x1); // Wait for DMA disable
+		i2c_handle->err_flag = I2C_ERROR_DMA;
 		return;
 	}
 
@@ -106,9 +104,11 @@ void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 		*dma_ifcr = tcif_mask; // write 1 to clear TCIF
 
 		rx_stream_dir->CR &= ~0x1; // disable stream, transfer is done
-
+		TIM14->CR1 &= ~(0x1);  // Stop timer
+		TIM14->EGR |= 0x1;  // Re-initialize the CNT.
+		TIM14->SR &= ~0x1;
+		i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
 		i2c_stop(i2c_handle);
-		// TODO: signal completion to the caller (flag or callback) + run checksum, stop timeout timer
 	}
 }
 
@@ -147,14 +147,14 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	{
 		/*
 			BERR - Protocol-level anomalie. Abort the current transaction as data send may be corrupted.
-			Start the transaction for one retry max always checking timing respects the frecuency of read
-			request from master to slave.
+			Re-start the transaction for max_retrys.
 		*/
 		i2c_handle->i2c->SR1 &= ~(0x1 << 8);
 		if (i2c_handle->curr_retrys < i2c_handle->max_retrys)
 		{
-			// probably clean all the flags for dma before starting a new transaction
-			i2c_start(i2c_handle);
+			i2c_handle->curr_retrys++;
+			// probably clean all the flags for dma before starting a new transaction?
+			i2c_start_init(i2c_handle);
 		}
 		else
 		{
@@ -162,6 +162,33 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			i2c_stop(i2c_handle);
 		}
 	}
-}   
-	
-// TODO: checksum, bus_recovery, timer activation and isr
+}   	
+
+void i2c_tim_irq_handler(i2c_handle_t *i2c_handle)
+{
+	/*
+		Each case is empty for now, but one can implement a log system
+		and trigger a log write inside each case.
+	*/
+	TIM14->SR &= ~(0x1);
+	i2c_stop_timer();
+	i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
+	switch (i2c_handle->err_flag)
+	{
+		case I2C_ERROR_DMA:
+			break;
+		case I2C_ERROR_AF:
+			break;
+		case I2C_ERROR_ARLO:
+			break;
+		case I2C_ERROR_BERR:
+			break;
+		case I2C_ERROR_CLEAR:
+			/*
+				If this is the case, comms went wrong.
+				Probably slave stuck holding SDA low.
+				Enter bus recovery mode
+			*/
+			break;
+	}
+}

@@ -5,14 +5,14 @@
 #include "stm32f446xx.h"
 #define F_SCL 100000 // 100 kHz Standard Mode
 #define MAX_RISE_SM 0.000001f // 1us
-#define TIMEOUT_CLK_CNT 65535 // TIM14 Auto-reload value
-#define MAX_APB1_CLK_HZ 90000000UL
-#define MIN_APB1_CLK_HZ 90000000UL
 
-/* SNIPPET OF .h — define these to match your CubeMX clock config */
-#define APB1_TIM_CLK_HZ   50000000UL  // TIM14 input clock — see note below
+/* define these to match your CubeMX clock config */
+#define APB1_TIM_CLK_HZ   50000000UL  // TIM14 input clock
 #define TIMER_TICK_HZ     10000UL     // 10 kHz -> 100 us per tick
 #define TIMEOUT_CLK_CNT   300         // e.g. 300 * 100us = 30 ms timeout, tune to your bus
+
+#define MAX_APB1_CLK_HZ 90000000UL
+#define MIN_APB1_CLK_HZ 90000000UL
 
 typedef enum{
 	I2C_OK,
@@ -72,6 +72,7 @@ void i2c_start_init(i2c_handle_t *i2c_handle);
 void i2c_start(i2c_handle_t *i2c_handle);
 void i2c_stop(i2c_handle_t *i2c_handle);
 void i2c_stop_timer(void);
+void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 // void i2c_bus_recovery(i2c_handle_t *i2c_handle); // TODO
 
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);

@@ -245,19 +245,19 @@ void i2c_stop(i2c_handle_t *i2c_handle)
 	i2c_handle->i2c->CR1 |= (0x1 << 10);  // ACK = 1
 	i2c_handle->i2c->CR2 |= (0x1 << 10);  // ITBUFEN = 1
 }
-i2c_status_t i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	/*
 		Main public entry point.
 	*/
 	if (dma_handle->rx_buffer == 0 || dma_handle->rx_nb_transfers == 0)
-		return (I2C_ERROR);
+		return ;
 
 	// Refuse to start a new transaction while one is already in flight.
 	if (i2c_handle->state != I2C_IDLE)
-		return (I2C_UNAVAILABLE);
+		return ;
 
 	i2c_start(i2c_handle); // arms timer, sets state, issues START
 
-	return (I2C_OK); // transaction INITIATED, not complete — async, caller polls state
+	// transaction INITIATED, not complete — async, caller polls state
 }

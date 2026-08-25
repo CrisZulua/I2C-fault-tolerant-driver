@@ -136,6 +136,7 @@ Actively testing against a **BME280** environmental sensor as the first real sla
 ## Resources
 
 [I2C lock up prevention and recovery - PEBBLE BAY](https://pebblebay.com/i2c-lock-up-prevention-and-recovery/)
+[I2C Stuck Bus: Prevention Workarounds - TI](https://www.ti.com/lit/an/scpa069/scpa069.pdf?ts=1787653972528)
 
 ## License
 

@@ -3,16 +3,22 @@
 
 
 #include "stm32f446xx.h"
-#define F_SCL 100000 // 100 kHz Standard Mode
+#define I2C_SCL_FREQ_HZ 100000U // 100 kHz Standard Mode
 #define MAX_RISE_SM 0.000001f // 1us
 
 /* define these to match your CubeMX clock config */
-#define APB1_TIM_CLK_HZ   50000000UL  // TIM14 input clock
-#define TIMER_TICK_HZ     10000UL     // 10 kHz -> 100 us per tick
-#define TIMEOUT_CLK_CNT   300         // e.g. 300 * 100us = 30 ms timeout, tune to your bus
+#define APB1_TIM_CLK_HZ   50000000U		// TIM14 input clock
+#define TIMER_TICK_HZ     10000U		// 10 kHz -> 100 us per tick
+#define TIMEOUT_CLK_CNT   300U			// e.g. 300 * 100us = 30 ms timeout, tune to your bus
 
-#define MAX_APB1_CLK_HZ 90000000UL
-#define MIN_APB1_CLK_HZ 90000000UL
+#define MAX_APB1_CLK_HZ 90000000U
+#define MIN_APB1_CLK_HZ 2000000U
+
+/* Bus Recovery Macros */
+#define I2C_CLOCK_RECOVERY_CYCLES 10U		// Number of cycles to recover bus
+#define I2C_HALF_PERIOD_RECOVERY_TICKS 1U		// Number of cycles to recover bus
+
+
 
 typedef enum{
 	I2C_OK,
@@ -53,18 +59,15 @@ typedef struct i2c_handle_s{
 	i2c_err_flag_t err_flag;
 	uint8_t max_retrys;
 	uint8_t curr_retrys;
+	uint8_t in_recovery;
 } i2c_handle_t;
 
 typedef struct dma_handle_s
 {
 	uint8_t rx_stream;
 	uint8_t rx_channel;
-	uint8_t tx_stream;
-	uint8_t tx_channel;
 	uint8_t *rx_buffer;
-	uint8_t *tx_buffer;
 	uint16_t rx_nb_transfers;
-	uint16_t tx_nb_transfers;
 } dma_handle_t;
 
 i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
@@ -73,7 +76,7 @@ void i2c_start(i2c_handle_t *i2c_handle);
 void i2c_stop(i2c_handle_t *i2c_handle);
 void i2c_stop_timer(void);
 void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-// void i2c_bus_recovery(i2c_handle_t *i2c_handle); // TODO
+i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle);
 
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);

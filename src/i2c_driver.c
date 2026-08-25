@@ -26,12 +26,10 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 		selection is a user task.
 	*/
 	DMA_Stream_TypeDef *rx_stream_dir;
-	DMA_Stream_TypeDef *tx_stream_dir;
 
-	if (dma->rx_stream > 7 || dma->rx_channel > 7 || dma->tx_stream > 7 || dma->tx_channel > 7)
+	if (dma->rx_stream > 7 || dma->rx_channel > 7)
 		return (I2C_ERROR);
 	rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma->rx_stream));
-	tx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma->tx_stream));
 	RCC->AHB1ENR |= (0x1 << 21);
 
 	// Stream Configuration Procedure
@@ -48,25 +46,9 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	rx_stream_dir->CR &= ~(0x3 << 6); // Peripheral to memory
 	rx_stream_dir->CR |= (0x14); // TCIE and TEIE
 	
-	// TX
-	tx_stream_dir->CR &= ~0x1; // Disable stream and wait for it
-	while(tx_stream_dir->CR & 0x1);
-	tx_stream_dir->PAR = (uint32_t)&i2c->DR; // Peripheral address
-	tx_stream_dir->M0AR = dma->tx_buffer; // Memory address
-	tx_stream_dir->NDTR = dma->tx_nb_transfers; // number of transfers
-	tx_stream_dir->CR &= ~(0x7 << 25); // CHSEL clear
-	tx_stream_dir->CR |= (dma->tx_channel << 25); // CHSEL
-	tx_stream_dir->CR &= ~(0x3 << 13); // Memory data size 8 bits
-	tx_stream_dir->CR &= ~(0x3 << 11); // Peripheral data size 8 bits
-	tx_stream_dir->CR &= ~(0x3 << 6); // Memory to Peripheral clear
-	tx_stream_dir->CR |= (0x1 << 6); // Memory to Peripheral
-	tx_stream_dir->CR |= (0x14); // TCIE and TEIE
-	
 	// Enable memory increment only for transfers greater than 1 data unit
 	if (dma->rx_nb_transfers > 1)
 		rx_stream_dir->CR |= (0x1 << 10);
-	if (dma->tx_nb_transfers > 1)
-		tx_stream_dir->CR |= (0x1 << 10);
 
 	// Enable NVIC IRQ. Position for DMA1_Stream0 is 11 inside the vector table
 	if (dma->rx_stream > 6)
@@ -74,10 +56,6 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	else
 		NVIC->ISER[0] |= (0x1 << (11 + dma->rx_stream));
 	
-	if (dma->tx_stream > 6)
-		NVIC->ISER[1] |= (0x1 << 15);
-	else
-		NVIC->ISER[0] |= (0x1 << (11 + dma->tx_stream));
 	// Enabling of DMA tx and rx happens at start condition
 	return (I2C_OK);
 }
@@ -169,7 +147,7 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 	i2c->CR2 &= ~(0x3F);
 	i2c->CR2 |= (APB1_TIM_CLK_HZ / 1000000UL);
 	i2c->CCR &= ~(0x0FFF);
-	i2c->CCR |= (0x0FFF & (APB1_TIM_CLK_HZ / (2 * F_SCL)));
+	i2c->CCR |= (0x0FFF & (APB1_TIM_CLK_HZ / (2 * I2C_SCL_FREQ_HZ)));
 	i2c->TRISE &= ~(0x3F);
 	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * APB1_TIM_CLK_HZ) + 1));
 
@@ -253,11 +231,86 @@ void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	if (dma_handle->rx_buffer == 0 || dma_handle->rx_nb_transfers == 0)
 		return ;
 
-	// Refuse to start a new transaction while one is already in flight.
-	if (i2c_handle->state != I2C_IDLE)
+	// Refuse to start a new transaction while one is already in flight,
+	// or bus is busy.
+	if (i2c_handle->state != I2C_IDLE || (i2c_handle->i2c->SR2 & 0x2))
 		return ;
 
 	i2c_start(i2c_handle); // arms timer, sets state, issues START
 
 	// transaction INITIATED, not complete — async, caller polls state
+}
+
+i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle)
+{
+	/*
+		Retake SCL port as GPIO to manually produce CLOCK_RECOVERY_CYCLES
+		Then release the bus and arm I2C again
+	*/
+
+	i2c_handle->i2c->CR1 &= ~(0x1); // Disable I2C peripheral to take control
+
+	i2c_handle->scl_port->MODER &= ~(0x3 << (i2c_handle->scl_pin * 2)); // General purpose output mode
+	i2c_handle->scl_port->MODER |= (0x1 << (i2c_handle->scl_pin * 2)); // General purpose output mode
+	i2c_handle->scl_port->OTYPER &= ~(0x1 << i2c_handle->scl_pin); // Output push-pull
+	i2c_handle->scl_port->OSPEEDR &= ~(0x3 << (i2c_handle->scl_pin * 2)); // Fast speed
+	i2c_handle->scl_port->OSPEEDR |= (0x2 << (i2c_handle->scl_pin * 2)); // Fast speed
+	i2c_handle->scl_port->PUPDR &= ~(0x3 << (i2c_handle->scl_pin * 2)); // No pull-up, pull-down
+	i2c_handle->scl_port->ODR |= (0x1 << i2c_handle->scl_pin); // Initial state HIGH
+
+	// Claim sda port as Input so we can monitor if SDA comes back to high
+	i2c_handle->sda_port->MODER &= ~(0x3 << (i2c_handle->sda_pin * 2)); // Input Mode
+	i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Push-pull
+	i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2));
+	i2c_handle->sda_port->PUPDR |= (0x1 << (i2c_handle->sda_pin * 2)); // Pull up
+
+	/*
+		Use TIM14 to toggle ODR value and generate a precise clock signal.
+	*/
+	TIM14->PSC = (uint16_t)(APB1_TIM_CLK_HZ / (2U * I2C_SCL_FREQ_HZ)) - 1; // Generate a 200 kHz pre-scaler
+
+	TIM14->EGR |= 0x1;	// force an update to load PSC/ARR into shadow registers immediately
+	TIM14->SR &= ~0x1;	// clear any spurious UIF set by the EGR update above
+
+	TIM14->DIER &= ~0x1;  // no interrupt — we're polling CNT directly
+	TIM14->CR1 |= 0x1;   // free-running
+
+	for (uint8_t i = 0; i < I2C_CLOCK_RECOVERY_CYCLES; i++)
+	{
+		i2c_handle->scl_port->ODR &= ~(1 << i2c_handle->scl_pin);
+		TIM14->CNT = 0;
+		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
+
+		i2c_handle->scl_port->ODR |= (1 << i2c_handle->scl_pin);
+		TIM14->CNT = 0;
+		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
+
+		if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
+			break; // SDA released early — no need to keep clocking
+	}
+
+	TIM14->CR1 &= ~(0x1);   // Stop timer
+
+	i2c_handle->sda_port->MODER |= (0x1 << (i2c_handle->sda_pin * 2)); // SDA as output, briefly
+	i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Output push-pull
+	i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2)); // No pull-up, pull-down
+	i2c_handle->sda_port->ODR &= ~(1 << i2c_handle->sda_pin); // SDA low
+	// SCL High already
+	i2c_handle->sda_port->ODR |= (1 << i2c_handle->sda_pin); // SDA high while SCL high = STOP
+	/*
+		After timer is stopped, re-init SCL, SDA port, I2C peripheral and TIM14
+	*/
+	if (i2c_GPIO_AF(i2c_handle->scl_port, i2c_handle->scl_pin) != I2C_OK)
+		return (I2C_ERROR);
+
+	if (i2c_GPIO_AF(i2c_handle->sda_port, i2c_handle->sda_pin) != I2C_OK)
+		return (I2C_ERROR);
+
+	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
+		return (I2C_ERROR);
+
+	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
+		return (I2C_ERROR);
+	
+	return (I2C_OK);
 }

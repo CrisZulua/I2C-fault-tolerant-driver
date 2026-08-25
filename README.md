@@ -87,6 +87,8 @@ i2c_mem_read(&i2c_handle, &dma_handle, i2c_handle.slave_addr, i2c_handle.slave_r
 
 Correct DMA stream/channel selection for the chosen I2C instance is the caller's responsibility — see the alternate function table in the STM32F446 datasheet.
 
+It is advised that i2c_bus_recovery() function is called at startup to ensure the bus is in a known good state before any transactions are attempted.
+
 ### Timeout tuning
 
 The watchdog is timer-driven, not a spin count, so it needs to be set against your actual clock tree:
@@ -130,6 +132,10 @@ Actively testing against a **BME280** environmental sensor as the first real sla
 2. Fault-injection test harness — force a stuck bus and a forced NACK, confirm recovery and bounded retry both behave as designed.
 3. Validate against the BME280 end to end (chip ID read, calibration read, measurement read).
 4. Low-power STOP-mode sampling (future, separate milestone).
+
+## Resources
+
+[I2C lock up prevention and recovery - PEBBLE BAY](https://pebblebay.com/i2c-lock-up-prevention-and-recovery/)
 
 ## License
 

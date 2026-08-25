@@ -189,6 +189,8 @@ void i2c_tim_irq_handler(i2c_handle_t *i2c_handle)
 				Probably slave stuck holding SDA low.
 				Enter bus recovery mode
 			*/
+			if (i2c_bus_recovery(i2c_handle) != I2C_OK)
+				i2c_handle->state = I2C_STUCK;
 			break;
 	}
 }

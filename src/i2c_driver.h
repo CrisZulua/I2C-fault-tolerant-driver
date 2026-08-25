@@ -37,6 +37,7 @@ typedef enum{
 	I2C_RX_RSTART,
 	I2C_RX_SLAVE_ADDRESS,
 	I2C_RX_ACTIVE,
+	I2C_STUCK,
 } i2c_comm_state_t;
 
 typedef enum{
@@ -59,7 +60,6 @@ typedef struct i2c_handle_s{
 	i2c_err_flag_t err_flag;
 	uint8_t max_retrys;
 	uint8_t curr_retrys;
-	uint8_t in_recovery;
 } i2c_handle_t;
 
 typedef struct dma_handle_s

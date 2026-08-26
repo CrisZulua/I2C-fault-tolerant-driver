@@ -1,6 +1,6 @@
 #include "i2c_driver.h"
 
-static i2c_status_t i2c_tim14_setup(i2c_handle_t *i2c_handle)
+static i2c_status_t i2c_tim14_setup(void)
 {
 	RCC->APB1ENR |= (0x1 << 8); // Feed clock
 
@@ -33,10 +33,11 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	RCC->AHB1ENR |= (0x1 << 21);
 
 	// RX - Stream Configuration Procedure
-	rx_stream_dir->CR &= ~0x1; // Disable stream and wait for it
-	while(500); // Wait stream disable
+	rx_stream_dir->CR &= ~0x1; // Disable stream
+	while (rx_stream_dir->CR & 0x1)
+		; // Wait for the hardware to finish disabling the stream
 	rx_stream_dir->PAR = (uint32_t)&i2c->DR; // Peripheral address
-	rx_stream_dir->M0AR = dma->rx_buffer; // Memory address
+	rx_stream_dir->M0AR = (uint32_t)dma->rx_buffer; // Memory address
 	rx_stream_dir->NDTR = dma->rx_nb_transfers; // number of transfers
 	rx_stream_dir->CR &= ~(0x7 << 25); // CHSEL clear
 	rx_stream_dir->CR |= (dma->rx_channel << 25); // CHSEL
@@ -51,7 +52,7 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 
 	// Enable NVIC IRQ. Position for DMA1_Stream0 is 11 inside the vector table
 	if (dma->rx_stream > 6)
-		NVIC->ISER[1] |= (0x1 << 15);
+		NVIC->ISER[1] |= (0x1 << 16);
 	else
 		NVIC->ISER[0] |= (0x1 << (11 + dma->rx_stream));
 	
@@ -183,7 +184,7 @@ i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 		return (I2C_GPIO_CONFIG_ERROR);
 	if (i2c_GPIO_AF(i2c_handle->scl_port, i2c_handle->scl_pin) != I2C_OK)
 		return (I2C_GPIO_CONFIG_ERROR);
-	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
+	if (i2c_tim14_setup() != I2C_OK)
 		return (I2C_TIM_CONFIG_ERROR);
 	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)
 		return (I2C_DMA_CONFIG_ERROR);
@@ -319,7 +320,7 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	if (i2c_GPIO_AF(i2c_handle->sda_port, i2c_handle->sda_pin) != I2C_OK)
 		return (I2C_ERROR);
 
-	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
+	if (i2c_tim14_setup() != I2C_OK)
 		return (I2C_ERROR);
 
 	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)

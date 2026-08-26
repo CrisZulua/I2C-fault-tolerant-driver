@@ -20,7 +20,7 @@ static void i2c_arm_rx_dma(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	// Disable ITBUFEN as rm0390 suggest. No TxE or RxNE interrupts generated. DMA takes control.
 	i2c_handle->i2c->CR2 &= ~(0x1 << 10);
 	rx_stream_dir->NDTR = dma_handle->rx_nb_transfers;
-	rx_stream_dir->M0AR = dma_handle->rx_buffer;
+	rx_stream_dir->M0AR = (uint32_t)dma_handle->rx_buffer;
 	rx_stream_dir->CR |= 0x1; // Enable DMA
 }
 
@@ -200,6 +200,8 @@ void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			*/
 			if (i2c_bus_recovery(i2c_handle, dma_handle) != I2C_OK)
 				i2c_handle->state = I2C_RECOVERY_FAILED;
+			break;
+		case I2C_ERROR_BUS_STUCK:
 			break;
 	}
 }

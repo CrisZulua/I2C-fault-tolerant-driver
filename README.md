@@ -53,6 +53,11 @@ A transaction is a write phase (slave address, then register address) followed b
 - **Bounded retry policy** — `max_retrys` in the handle caps automatic retries; the driver reports failure instead of retrying forever against a bus that isn't coming back.
 - **Bus recovery** *(designed, implementation in progress)* — manual SCL toggling to release a slave stuck holding SDA low, followed by a clean peripheral reinit.
 
+## Milestones
+- [x] Compilation using arm-none-eabi-gcc, CMSIS/LL, no HAL
+- [ ] Full end-to-end test against a real slave device (BME280)
+- [ ] Fault-injection test harness to force NACK and stuck-bus scenarios
+
 ## How to use
 
 ```c
@@ -120,7 +125,6 @@ Actively testing against a **BME280** environmental sensor as the first real sla
 - AF / ARLO / BERR error detection with bounded retry
 
 **Not yet implemented:**
-- Bus recovery (SCL bit-bang unstick sequence) — designed, next up
 - Fault-injection test suite (forced NACK / stuck-bus scenarios)
 
 **Descoped for now, may return later:**
@@ -128,10 +132,9 @@ Actively testing against a **BME280** environmental sensor as the first real sla
 
 ## Roadmap
 
-1. Implement bus recovery: reclaim SCL/SDA as GPIO, toggle SCL until SDA releases, issue a manual STOP, reinitialize the peripheral.
-2. Fault-injection test harness — force a stuck bus and a forced NACK, confirm recovery and bounded retry both behave as designed.
-3. Validate against the BME280 end to end (chip ID read, calibration read, measurement read).
-4. Low-power STOP-mode sampling (future, separate milestone).
+1. Fault-injection test harness — force a stuck bus and a forced NACK, confirm recovery and bounded retry both behave as designed.
+2. Validate against the BME280 end to end (chip ID read, calibration read, measurement read).
+3. Low-power STOP-mode sampling (future, separate milestone).
 
 ## Resources
 

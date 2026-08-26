@@ -5,15 +5,57 @@ static void i2c_arm_rx_dma(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	// Differentiate between 1 byte transfer and multi-byte transfer
 	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
 
-	// 1 byte reception, reset ACK and STOP generation at DMA TCI
+	// Is the reception single-byte or multi-byte
 	if (dma_handle->rx_nb_transfers < 2)
-		i2c_handle->i2c->CR1 &= ~(0x1 << 10);
+	{
+		i2c_handle->i2c->CR1 &= ~(0x1 << 10); // ACK = 0
+		i2c_handle->i2c->CR1 &= ~(0x1 << 12); // LAST = 0
+	}
+	else
+	{
+		i2c_handle->i2c->CR1 |= (0x1 << 10);  // ACK = 1 (defensive)
+		i2c_handle->i2c->CR2 |= (0x1 << 12);  // LAST = 1
+	}
 	
 	// Disable ITBUFEN as rm0390 suggest. No TxE or RxNE interrupts generated. DMA takes control.
 	i2c_handle->i2c->CR2 &= ~(0x1 << 10);
 	rx_stream_dir->NDTR = dma_handle->rx_nb_transfers;
 	rx_stream_dir->M0AR = dma_handle->rx_buffer;
 	rx_stream_dir->CR |= 0x1; // Enable DMA
+}
+
+void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
+	const uint8_t dma_flag_base[4] = {0, 6, 16, 22};
+
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+	volatile uint32_t *dma_isr  = (volatile uint32_t *)(DMA1_BASE + 0x4 * (dma_handle->rx_stream / 4));
+	volatile uint32_t *dma_ifcr = (volatile uint32_t *)(DMA1_BASE + 0x8 + 0x4 * (dma_handle->rx_stream / 4));
+
+	uint8_t base = dma_flag_base[dma_handle->rx_stream % 4];
+	uint32_t teif_mask = (0x1 << (base + 3));
+	uint32_t tcif_mask = (0x1 << (base + 5));
+
+	rx_stream_dir->CR &= ~0x1;  // disable stream, TCI or TEI
+
+	if (*dma_isr & teif_mask)
+	{
+		*dma_ifcr = (0x3D << base); // clears FEIF|DMEIF|TEIF|HTIF|TCIF for this stream
+		i2c_handle->err_flag = I2C_ERROR_DMA;
+		return;
+	}
+
+	// Transfer complete, no errors — happy path.
+	if (*dma_isr & tcif_mask)
+	{
+		*dma_ifcr = tcif_mask; // write 1 to clear TCIF
+
+		TIM14->CR1 &= ~(0x1);  // Stop timer
+		TIM14->EGR |= 0x1;  // Re-initialize the CNT.
+		TIM14->SR &= ~0x1;
+		i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
+		i2c_stop(i2c_handle);
+	}
 }
 
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
@@ -56,9 +98,9 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			// SB -> adress slave but this time to read
 			if (sr1 & 0x1)
 			{
-				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 1;
 				// Enable DMAEN before ADDR event. After sending the address no RxNE happens
 				i2c_handle->i2c->CR2 |= (0x1 << 11);
+				i2c_handle->i2c->DR = (i2c_handle->slave_addr << 1) | 1;
 			}
 
 			// ADDR -> Clear flag and arm RX DMA. In RX MODE there is no TXE.
@@ -77,41 +119,6 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	}
 }
 
-void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
-{
-	const uint8_t dma_flag_base[4] = {0, 6, 16, 22};
-
-	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
-	volatile uint32_t *dma_isr  = (volatile uint32_t *)(DMA1_BASE + 0x4 * (dma_handle->rx_stream / 4));
-	volatile uint32_t *dma_ifcr = (volatile uint32_t *)(DMA1_BASE + 0x8 + 0x4 * (dma_handle->rx_stream / 4));
-
-	uint8_t base = dma_flag_base[dma_handle->rx_stream % 4];
-	uint32_t teif_mask = (0x1 << (base + 3));
-	uint32_t tcif_mask = (0x1 << (base + 5));
-
-	if (*dma_isr & teif_mask)
-	{
-		*dma_ifcr = (0x3D << base); // clears FEIF|DMEIF|TEIF|HTIF|TCIF for this stream
-		rx_stream_dir->CR &= ~0x1;  // disable stream
-		while (rx_stream_dir->CR & 0x1); // Wait for DMA disable
-		i2c_handle->err_flag = I2C_ERROR_DMA;
-		return;
-	}
-
-	// Transfer complete, no errors — happy path.
-	if (*dma_isr & tcif_mask)
-	{
-		*dma_ifcr = tcif_mask; // write 1 to clear TCIF
-
-		rx_stream_dir->CR &= ~0x1; // disable stream, transfer is done
-		TIM14->CR1 &= ~(0x1);  // Stop timer
-		TIM14->EGR |= 0x1;  // Re-initialize the CNT.
-		TIM14->SR &= ~0x1;
-		i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
-		i2c_stop(i2c_handle);
-	}
-}
-
 void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	/*
@@ -121,7 +128,7 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	*/
 	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
 	rx_stream_dir->CR &= ~0x1; // disable stream
-	while (rx_stream_dir->CR & 0x1); // Wait for DMA disable
+	// No need to wait for DMA disable as no configuration is being changeds
 
 	if (i2c_handle->i2c->SR1 & (0x1 << 10))
 	{
@@ -154,6 +161,8 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 		{
 			i2c_handle->curr_retrys++;
 			// probably clean all the flags for dma before starting a new transaction?
+			// What happens to timeout?? does it keep running o r do we re start the registers
+			// for a clean start?
 			i2c_start_init(i2c_handle);
 		}
 		else

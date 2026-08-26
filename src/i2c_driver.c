@@ -32,10 +32,9 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma->rx_stream));
 	RCC->AHB1ENR |= (0x1 << 21);
 
-	// Stream Configuration Procedure
-	// RX
+	// RX - Stream Configuration Procedure
 	rx_stream_dir->CR &= ~0x1; // Disable stream and wait for it
-	while(rx_stream_dir->CR & 0x1);
+	while(500); // Wait stream disable
 	rx_stream_dir->PAR = (uint32_t)&i2c->DR; // Peripheral address
 	rx_stream_dir->M0AR = dma->rx_buffer; // Memory address
 	rx_stream_dir->NDTR = dma->rx_nb_transfers; // number of transfers
@@ -56,7 +55,7 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	else
 		NVIC->ISER[0] |= (0x1 << (11 + dma->rx_stream));
 	
-	// Enabling of DMA tx and rx happens at start condition
+	// Enabling of DMA rx happens at start condition
 	return (I2C_OK);
 }
 
@@ -143,6 +142,8 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 	if (APB1_TIM_CLK_HZ > MAX_APB1_CLK_HZ || APB1_TIM_CLK_HZ < MIN_APB1_CLK_HZ)
 		return (I2C_ERROR);
 	i2c->CR1 &= ~(0x1); // Disable peripheral
+	i2c->CR2 &= ~(0x1 << 11); // DMAEN=0
+	i2c->CR2 &= ~(0x1 << 12); // LAST=0
 	i2c->CR1 |= (1 << 10); // Enable ACK
 	i2c->CR2 &= ~(0x3F);
 	i2c->CR2 |= (APB1_TIM_CLK_HZ / 1000000UL);
@@ -196,7 +197,7 @@ void i2c_start_init(i2c_handle_t *i2c_handle)
 	i2c_handle->state = I2C_TX_SLAVE_ADDRESS;
 	i2c_handle->err_flag = I2C_ERROR_CLEAR;
 	TIM14->CR1 |= 0x1; // Enable TIMEOUT
-	i2c_handle->i2c->CR1 |= (0x1 << 8);
+	i2c_handle->i2c->CR1 |= (0x1 << 8); // issue START
 }
 
 void i2c_start(i2c_handle_t *i2c_handle)
@@ -249,7 +250,7 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	*/
 	i2c_status_t recovered;
 
-	recovered = I2C_ERROR_BUS_UNRECOVERABLE;
+	recovered = I2C_BUS_UNRECOVERABLE;
 	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
 	rx_stream_dir->CR &= ~0x1; // disable stream — do this before reclaiming SCL/SDA
 	i2c_handle->i2c->CR1 &= ~(0x1); // Disable I2C peripheral to take control
@@ -293,10 +294,12 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 			break; // SDA released early — no need to keep clocking
 	}
 
+	i2c_handle->err_flag = I2C_ERROR_BUS_STUCK;
 	// If bus is recovered, issue a STOP sequence
 	if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
 	{
 		recovered = I2C_OK;
+		i2c_handle->err_flag = I2C_ERROR_CLEAR;
 		i2c_handle->sda_port->MODER |= (0x1 << (i2c_handle->sda_pin * 2)); // SDA as output, briefly
 		i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Output push-pull
 		i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2)); // No pull-up, pull-down
@@ -325,5 +328,8 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
 		return (I2C_ERROR);
 	
+	// state will be handle by the outcome of this routine. I2C_IDLE or I2C_RECOVERY_FAILED
+	// err_flag will keep the last error trigger or CLEAR if bus was recovered
+
 	return (recovered);
 }

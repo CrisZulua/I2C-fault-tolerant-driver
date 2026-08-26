@@ -27,7 +27,7 @@ typedef enum{
 	I2C_GPIO_CONFIG_ERROR,
 	I2C_DMA_CONFIG_ERROR,
 	I2C_TIM_CONFIG_ERROR,
-	I2C_ERROR_BUS_UNRECOVERABLE,
+	I2C_BUS_UNRECOVERABLE,
 } i2c_status_t;
 
 typedef enum{
@@ -47,6 +47,7 @@ typedef enum{
 	I2C_ERROR_AF,
 	I2C_ERROR_ARLO,
 	I2C_ERROR_BERR,
+	I2C_ERROR_BUS_STUCK,
 } i2c_err_flag_t;
 
 typedef struct i2c_handle_s{
@@ -83,4 +84,5 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);   // AF (NACK), BERR, ARLO, timeout-related
 void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+
 #endif // I2C_DRIVER_H

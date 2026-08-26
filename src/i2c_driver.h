@@ -27,6 +27,7 @@ typedef enum{
 	I2C_GPIO_CONFIG_ERROR,
 	I2C_DMA_CONFIG_ERROR,
 	I2C_TIM_CONFIG_ERROR,
+	I2C_ERROR_BUS_UNRECOVERABLE,
 } i2c_status_t;
 
 typedef enum{
@@ -37,7 +38,7 @@ typedef enum{
 	I2C_RX_RSTART,
 	I2C_RX_SLAVE_ADDRESS,
 	I2C_RX_ACTIVE,
-	I2C_STUCK,
+	I2C_RECOVERY_FAILED,
 } i2c_comm_state_t;
 
 typedef enum{
@@ -73,13 +74,13 @@ typedef struct dma_handle_s
 i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_start_init(i2c_handle_t *i2c_handle);
 void i2c_start(i2c_handle_t *i2c_handle);
-void i2c_stop(i2c_handle_t *i2c_handle);
 void i2c_stop_timer(void);
+void i2c_stop(i2c_handle_t *i2c_handle);
 void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle);
+i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);   // AF (NACK), BERR, ARLO, timeout-related
-void i2c_tim_irq_handler(i2c_handle_t *i2c_handle);
+void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 #endif // I2C_DRIVER_H

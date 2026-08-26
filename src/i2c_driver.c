@@ -182,10 +182,10 @@ i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 		return (I2C_GPIO_CONFIG_ERROR);
 	if (i2c_GPIO_AF(i2c_handle->scl_port, i2c_handle->scl_pin) != I2C_OK)
 		return (I2C_GPIO_CONFIG_ERROR);
-	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)
-		return (I2C_DMA_CONFIG_ERROR);
 	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
 		return (I2C_TIM_CONFIG_ERROR);
+	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)
+		return (I2C_DMA_CONFIG_ERROR);
 	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
 		return (I2C_UNAVAILABLE);
 	return (I2C_OK);
@@ -241,13 +241,17 @@ void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	// transaction INITIATED, not complete — async, caller polls state
 }
 
-i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle)
+i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	/*
 		Retake SCL port as GPIO to manually produce CLOCK_RECOVERY_CYCLES
 		Then release the bus and arm I2C again
 	*/
+	i2c_status_t recovered;
 
+	recovered = I2C_ERROR_BUS_UNRECOVERABLE;
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+	rx_stream_dir->CR &= ~0x1; // disable stream — do this before reclaiming SCL/SDA
 	i2c_handle->i2c->CR1 &= ~(0x1); // Disable I2C peripheral to take control
 
 	i2c_handle->scl_port->MODER &= ~(0x3 << (i2c_handle->scl_pin * 2)); // General purpose output mode
@@ -268,7 +272,7 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle)
 		Use TIM14 to toggle ODR value and generate a precise clock signal.
 	*/
 	TIM14->PSC = (uint16_t)(APB1_TIM_CLK_HZ / (2U * I2C_SCL_FREQ_HZ)) - 1; // Generate a 200 kHz pre-scaler
-
+	TIM14->ARR = 0xFFFF;	// Clear any possible auto-reloads
 	TIM14->EGR |= 0x1;	// force an update to load PSC/ARR into shadow registers immediately
 	TIM14->SR &= ~0x1;	// clear any spurious UIF set by the EGR update above
 
@@ -289,17 +293,23 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle)
 			break; // SDA released early — no need to keep clocking
 	}
 
-	TIM14->CR1 &= ~(0x1);   // Stop timer
-
-	i2c_handle->sda_port->MODER |= (0x1 << (i2c_handle->sda_pin * 2)); // SDA as output, briefly
-	i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Output push-pull
-	i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2)); // No pull-up, pull-down
-	i2c_handle->sda_port->ODR &= ~(1 << i2c_handle->sda_pin); // SDA low
-	// SCL High already
-	i2c_handle->sda_port->ODR |= (1 << i2c_handle->sda_pin); // SDA high while SCL high = STOP
+	// If bus is recovered, issue a STOP sequence
+	if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
+	{
+		recovered = I2C_OK;
+		i2c_handle->sda_port->MODER |= (0x1 << (i2c_handle->sda_pin * 2)); // SDA as output, briefly
+		i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Output push-pull
+		i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2)); // No pull-up, pull-down
+		i2c_handle->sda_port->ODR &= ~(1 << i2c_handle->sda_pin); // SDA low
+		// SCL High already
+		TIM14->CNT = 0;
+		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
+		i2c_handle->sda_port->ODR |= (1 << i2c_handle->sda_pin); // SDA high while SCL high = STOP
+	}
 	/*
 		After timer is stopped, re-init SCL, SDA port, I2C peripheral and TIM14
 	*/
+	TIM14->CR1 &= ~(0x1);   // Stop timer
 	if (i2c_GPIO_AF(i2c_handle->scl_port, i2c_handle->scl_pin) != I2C_OK)
 		return (I2C_ERROR);
 
@@ -309,8 +319,11 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle)
 	if (i2c_tim14_setup(i2c_handle) != I2C_OK)
 		return (I2C_ERROR);
 
+	if (i2c_DMA_setup(dma_handle, i2c_handle->i2c) != I2C_OK)
+		return (I2C_DMA_CONFIG_ERROR);
+
 	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
 		return (I2C_ERROR);
 	
-	return (I2C_OK);
+	return (recovered);
 }

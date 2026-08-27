@@ -281,16 +281,22 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	TIM14->DIER &= ~0x1;  // no interrupt — we're polling CNT directly
 	TIM14->CR1 |= 0x1;   // free-running
 
-	for (uint8_t i = 0; i < I2C_CLOCK_RECOVERY_CYCLES; i++)
+	// Try the manual SCL toggle at least 3 times before giving up.
+	for (uint8_t i = 0; i < 3; i++)
 	{
-		i2c_handle->scl_port->ODR &= ~(1 << i2c_handle->scl_pin);
-		TIM14->CNT = 0;
-		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
-
-		i2c_handle->scl_port->ODR |= (1 << i2c_handle->scl_pin);
-		TIM14->CNT = 0;
-		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
-
+		for (uint8_t i = 0; i < I2C_CLOCK_RECOVERY_CYCLES; i++)
+		{
+			i2c_handle->scl_port->ODR &= ~(1 << i2c_handle->scl_pin);
+			TIM14->CNT = 0;
+			while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
+	
+			i2c_handle->scl_port->ODR |= (1 << i2c_handle->scl_pin);
+			TIM14->CNT = 0;
+			while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
+	
+			if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
+				break; // SDA released early — no need to keep clocking
+		}
 		if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
 			break; // SDA released early — no need to keep clocking
 	}
@@ -333,4 +339,14 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	// err_flag will keep the last error trigger or CLEAR if bus was recovered
 
 	return (recovered);
+}
+
+void i2c_clear_recovery_failure(i2c_handle_t *i2c_handle)
+{
+	/*
+		Call this whenever the BUS is recovered outside the driver's API bus recovery
+		procedures.
+	*/
+    if (i2c_handle->state == I2C_RECOVERY_FAILED)
+        i2c_handle->state = I2C_IDLE;
 }

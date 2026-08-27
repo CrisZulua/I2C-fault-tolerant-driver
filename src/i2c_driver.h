@@ -9,14 +9,14 @@
 /* define these to match your CubeMX clock config */
 #define APB1_TIM_CLK_HZ   50000000U		// TIM14 input clock
 #define TIMER_TICK_HZ     10000U		// 10 kHz -> 100 us per tick
-#define TIMEOUT_CLK_CNT   300U			// e.g. 300 * 100us = 30 ms timeout, tune to your bus
+#define TIMEOUT_CLK_CNT   200U			// e.g. 200 * 100us = 20 ms timeout, tune to your bus
 
 #define MAX_APB1_CLK_HZ 90000000U
 #define MIN_APB1_CLK_HZ 2000000U
 
 /* Bus Recovery Macros */
-#define I2C_CLOCK_RECOVERY_CYCLES 10U		// Number of cycles to recover bus
-#define I2C_HALF_PERIOD_RECOVERY_TICKS 1U		// Number of cycles to recover bus
+#define I2C_CLOCK_RECOVERY_CYCLES 10U		// Number of SCL cycles to recover bus (MODIFY IF NEEDED, MINIMUM 9)
+#define I2C_HALF_PERIOD_RECOVERY_TICKS 1U	// Duty Cycle for bit-banding SCL (DO NOT MODIFY)
 
 
 

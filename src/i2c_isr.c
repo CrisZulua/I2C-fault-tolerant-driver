@@ -9,7 +9,7 @@ static void i2c_arm_rx_dma(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	if (dma_handle->rx_nb_transfers < 2)
 	{
 		i2c_handle->i2c->CR1 &= ~(0x1 << 10); // ACK = 0
-		i2c_handle->i2c->CR1 &= ~(0x1 << 12); // LAST = 0
+		i2c_handle->i2c->CR2 &= ~(0x1 << 12); // LAST = 0
 	}
 	else
 	{

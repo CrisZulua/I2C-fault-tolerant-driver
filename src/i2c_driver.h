@@ -72,17 +72,20 @@ typedef struct dma_handle_s
 	uint16_t rx_nb_transfers;
 } dma_handle_t;
 
-i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+/* PRIVATE API ROUTINES */
 void i2c_start_init(i2c_handle_t *i2c_handle);
 void i2c_start(i2c_handle_t *i2c_handle);
 void i2c_stop_timer(void);
 void i2c_stop(i2c_handle_t *i2c_handle);
-void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-
 void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);   // AF (NACK), BERR, ARLO, timeout-related
+void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+
+/* PUBLIC API ENTRYS */
+i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+void i2c_clear_recovery_failure(i2c_handle_t *i2c_handle);
 
 #endif // I2C_DRIVER_H

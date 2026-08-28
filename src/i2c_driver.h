@@ -3,13 +3,15 @@
 
 
 #include "stm32f446xx.h"
-#define I2C_SCL_FREQ_HZ 100000U // 100 kHz Standard Mode
+
+/* SET BY I2C STANDARD */
 #define MAX_RISE_SM 0.000001f // 1us
 
-/* define these to match your CubeMX clock config */
-#define APB1_TIM_CLK_HZ   50000000U		// TIM14 input clock
-#define TIMER_TICK_HZ     10000U		// 10 kHz -> 100 us per tick
-#define TIMEOUT_CLK_CNT   200U			// e.g. 200 * 100us = 20 ms timeout, tune to your bus
+/* Define these to match your CubeMX clock config */
+#define APB1_TIM_CLK_HZ 50000000U	// TIM14 input clock
+#define TIMER_TICK_HZ 10000U		// 10 kHz -> 100 us per tick
+#define TIMEOUT_CLK_CNT 50U			// e.g. 50 * 100us = 5 ms timeout, tune to your bus
+#define I2C_SCL_FREQ_HZ 100000U		// 100 kHz Standard Mode
 
 #define MAX_APB1_CLK_HZ 90000000U
 #define MIN_APB1_CLK_HZ 2000000U
@@ -17,8 +19,6 @@
 /* Bus Recovery Macros */
 #define I2C_CLOCK_RECOVERY_CYCLES 10U		// Number of SCL cycles to recover bus (MODIFY IF NEEDED, MINIMUM 9)
 #define I2C_HALF_PERIOD_RECOVERY_TICKS 1U	// Duty Cycle for bit-banding SCL (DO NOT MODIFY)
-
-
 
 typedef enum{
 	I2C_OK,
@@ -56,20 +56,20 @@ typedef struct i2c_handle_s{
 	uint16_t sda_pin;
 	uint16_t scl_pin;
 	I2C_TypeDef	*i2c;
-	uint8_t slave_addr;
-	uint8_t slave_reg;
-	i2c_comm_state_t state;
-	i2c_err_flag_t err_flag;
+	volatile uint8_t slave_addr;
+	volatile uint8_t slave_reg;
+	volatile i2c_comm_state_t state;
+	volatile i2c_err_flag_t err_flag;
 	uint8_t max_retrys;
-	uint8_t curr_retrys;
+	volatile uint8_t curr_retrys;
 } i2c_handle_t;
 
 typedef struct dma_handle_s
 {
 	uint8_t rx_stream;
 	uint8_t rx_channel;
-	uint8_t *rx_buffer;
-	uint16_t rx_nb_transfers;
+	volatile uint8_t *rx_buffer;
+	volatile uint16_t rx_nb_transfers;
 } dma_handle_t;
 
 /* PRIVATE API ROUTINES */

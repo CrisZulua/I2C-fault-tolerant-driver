@@ -142,6 +142,17 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 		return (I2C_ERROR);
 	if (APB1_TIM_CLK_HZ > MAX_APB1_CLK_HZ || APB1_TIM_CLK_HZ < MIN_APB1_CLK_HZ)
 		return (I2C_ERROR);
+
+	uint32_t reset_bit = 0;
+	if (i2c == I2C1)
+		reset_bit = 1 << 21; // I2C1
+	else if (i2c == I2C2)
+		reset_bit = 1 << 22; // I2C2
+	else if (i2c == I2C3)
+		reset_bit = 1 << 23; // I2C3
+	
+	RCC->APB1RSTR |= reset_bit; // Safe reset. SR2 BUSY bit set to 0
+	RCC->APB1RSTR &= ~reset_bit;
 	i2c->CR1 &= ~(0x1); // Disable peripheral
 	i2c->CR2 &= ~(0x1 << 11); // DMAEN=0
 	i2c->CR2 &= ~(0x1 << 12); // LAST=0

@@ -84,7 +84,7 @@ if (i2c_init(&i2c_handle, &dma_handle) != I2C_OK) {
     // handle initialization error
 }
 
-i2c_mem_read(&i2c_handle, &dma_handle, i2c_handle.slave_addr);
+i2c_mem_read(&i2c_handle, &dma_handle);
 // Returns once the transaction is INITIATED, not complete.
 // Completion is signaled asynchronously via i2c_handle.state coming back to IDLE
 // (I2C_IDLE), set from DMA interrupt context.

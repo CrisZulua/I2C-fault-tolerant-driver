@@ -46,9 +46,7 @@ static i2c_status_t i2c_DMA_setup(dma_handle_t *dma, I2C_TypeDef *i2c)
 	rx_stream_dir->CR &= ~(0x3 << 6); // Peripheral to memory
 	rx_stream_dir->CR |= (0x14); // TCIE and TEIE
 	
-	// Enable memory increment only for transfers greater than 1 data unit
-	if (dma->rx_nb_transfers > 1)
-		rx_stream_dir->CR |= (0x1 << 10);
+	// Memory increment is set at i2c_arm_rx_dma()
 
 	// Enable NVIC IRQ. Position for DMA1_Stream0 is 11 inside the vector table
 	if (dma->rx_stream > 6)

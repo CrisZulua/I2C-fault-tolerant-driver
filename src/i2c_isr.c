@@ -10,11 +10,13 @@ static void i2c_arm_rx_dma(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	{
 		i2c_handle->i2c->CR1 &= ~(0x1 << 10); // ACK = 0
 		i2c_handle->i2c->CR2 &= ~(0x1 << 12); // LAST = 0
+		rx_stream_dir->CR &= ~(0x1 << 10);	  // No Memory increment
 	}
 	else
 	{
 		i2c_handle->i2c->CR1 |= (0x1 << 10);  // ACK = 1 (defensive)
 		i2c_handle->i2c->CR2 |= (0x1 << 12);  // LAST = 1
+		rx_stream_dir->CR |= (0x1 << 10);	  // Memory increment
 	}
 	
 	// Disable ITBUFEN as rm0390 suggest. No TxE or RxNE interrupts generated. DMA takes control.

@@ -138,7 +138,7 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 {
 	if (i2c != I2C1 && i2c != I2C2 && i2c != I2C3)
 		return (I2C_ERROR);
-	if (APB1_TIM_CLK_HZ > MAX_APB1_CLK_HZ || APB1_TIM_CLK_HZ < MIN_APB1_CLK_HZ)
+	if (APB1_PERIPH_CLK_HZ > MAX_APB1_CLK_HZ || APB1_PERIPH_CLK_HZ < MIN_APB1_CLK_HZ)
 		return (I2C_ERROR);
 
 	uint32_t reset_bit = 0;
@@ -156,11 +156,11 @@ static i2c_status_t i2c_setup(I2C_TypeDef *i2c)
 	i2c->CR2 &= ~(0x1 << 12); // LAST=0
 	i2c->CR1 |= (1 << 10); // Enable ACK
 	i2c->CR2 &= ~(0x3F);
-	i2c->CR2 |= (APB1_TIM_CLK_HZ / 1000000UL);
+	i2c->CR2 |= ((APB1_PERIPH_CLK_HZ / 1000000UL) & 0x3F);
 	i2c->CCR &= ~(0x0FFF);
-	i2c->CCR |= (0x0FFF & (APB1_TIM_CLK_HZ / (2 * I2C_SCL_FREQ_HZ)));
+	i2c->CCR |= (0x0FFF & (APB1_PERIPH_CLK_HZ / (2 * I2C_SCL_FREQ_HZ)));
 	i2c->TRISE &= ~(0x3F);
-	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * APB1_TIM_CLK_HZ) + 1));
+	i2c->TRISE |= (0x3F & ((uint8_t)(MAX_RISE_SM * APB1_PERIPH_CLK_HZ) + 1));
 
 	i2c->CR2 |= (0x7 << 8); // Enable ITERR, ITEVT, ITBUF
 	/*

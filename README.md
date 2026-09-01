@@ -55,10 +55,23 @@ A transaction is a write phase (slave address, then register address) followed b
 
 ## Milestones
 - [x] Compilation using arm-none-eabi-gcc, CMSIS/LL, no HAL
-- [ ] Full end-to-end test against a real slave device (BME280)
+- [x] Full end-to-end test against a real slave device (BME280)
 - [ ] Fault-injection test harness to force NACK and stuck-bus scenarios
 
 ## How to use
+
+> **⚠️ WARNING — External pull-up resistors required on SDA and SCL**
+>
+> This driver configures the SDA and SCL GPIO pins as **open-drain with no
+> internal pull-up** (`PUPDR = 00`). The STM32's internal pull-up resistors
+> are too weak and unreliable for I2C bus operation.
+>
+> **You must provide external pull-up resistors on both SDA and SCL,**
+> pulled up to the I2C bus voltage (VDD, typically 3.3V).
+>
+> Without external pull-ups, SDA and SCL will not reliably reach a valid
+> logic-high level, and the driver will fail to communicate with any slave
+> device.
 
 ```c
 i2c_handle_t i2c_handle = {

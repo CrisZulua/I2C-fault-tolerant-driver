@@ -124,9 +124,11 @@ static i2c_status_t i2c_GPIO_AF(GPIO_TypeDef *port, uint16_t pin)
 	port->MODER |= (0x2 << (pin * 2));
 	// Open Drain
 	port->OTYPER |= (0x1 << pin);
-	// Pull-up resistor
+	// No pull-up, pull-down -- EXTERNAL PULL-UP RESISTOR NEEDED
 	port->PUPDR &= ~(0x3 << (pin * 2));
-	port->PUPDR |= (0x1 << (pin * 2));
+	// Fast Speed
+	port->OSPEEDR &= ~(0x3 << (pin * 2));
+	port->OSPEEDR |= (0x2 << (pin * 2));
 	// AF4
 	port->AFR[pin / 8] &= ~(0xf << ((pin % 8) * 4));
 	port->AFR[pin / 8] |= (0x4 << ((pin % 8) * 4));

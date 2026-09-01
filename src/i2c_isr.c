@@ -115,8 +115,6 @@ void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			}
 			break;
 		default:
-			// Maybe this is a good place to check BTF, it can be cause by deadlock.
-			// So this will be an error trigger.
 			break;
 	}
 }
@@ -162,9 +160,6 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 		if (i2c_handle->curr_retrys < i2c_handle->max_retrys)
 		{
 			i2c_handle->curr_retrys++;
-			// probably clean all the flags for dma before starting a new transaction?
-			// What happens to timeout?? does it keep running o r do we re start the registers
-			// for a clean start?
 			i2c_start_init(i2c_handle);
 		}
 		else

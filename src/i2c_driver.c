@@ -207,7 +207,6 @@ i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 void i2c_start_init(i2c_handle_t *i2c_handle)
 {
 	i2c_handle->state = I2C_TX_SLAVE_ADDRESS;
-	i2c_handle->err_flag = I2C_ERROR_CLEAR;
 	TIM14->CR1 |= 0x1; // Enable TIMEOUT
 	i2c_handle->i2c->CR1 |= (0x1 << 8); // issue START
 }
@@ -218,6 +217,7 @@ void i2c_start(i2c_handle_t *i2c_handle)
 		Start the transmission request
 	*/
 	i2c_handle->curr_retrys = 0;
+	i2c_handle->err_flag = I2C_ERROR_CLEAR;
 	i2c_start_init(i2c_handle);
 }
 

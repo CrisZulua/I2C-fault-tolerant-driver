@@ -191,12 +191,11 @@ void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			break;
 		case I2C_ERROR_CLEAR:
 			/*
-				If this is the case, comms went wrong.
-				Probably slave stuck holding SDA low.
-				Enter bus recovery mode
+				If this is the case, comms went wrong. Probably slave stuck holding SDA low.
+				Enter bus recovery mode.
 			*/
 			if (i2c_bus_recovery(i2c_handle, dma_handle) != I2C_OK)
-				i2c_handle->state = I2C_RECOVERY_FAILED;
+				i2c_handle->state = I2C_BUS_UNAVAILABLE;
 			break;
 		case I2C_ERROR_BUS_STUCK:
 			break;

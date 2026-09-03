@@ -52,11 +52,15 @@ void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	{
 		*dma_ifcr = tcif_mask; // write 1 to clear TCIF
 
-		TIM14->CR1 &= ~(0x1);  // Stop timer
-		TIM14->EGR |= 0x1;  // Re-initialize the CNT.
-		TIM14->SR &= ~0x1;
-		i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
-		i2c_stop(i2c_handle);
+		// Check if the comm state is the last one. DMA can trigger even if BERR occurs
+		if (i2c_handle->state == I2C_RX_ACTIVE)
+		{
+			TIM14->CR1 &= ~(0x1);  // Stop timer
+			TIM14->EGR |= 0x1;  // Re-initialize the CNT.
+			TIM14->SR &= ~0x1;
+			i2c_stop(i2c_handle);
+			i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
+		}
 	}
 }
 
@@ -157,16 +161,14 @@ void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			Re-start the transaction for max_retrys.
 		*/
 		i2c_handle->i2c->SR1 &= ~(0x1 << 8);
+		i2c_stop(i2c_handle);
 		if (i2c_handle->curr_retrys < i2c_handle->max_retrys)
 		{
 			i2c_handle->curr_retrys++;
 			i2c_start_init(i2c_handle);
 		}
 		else
-		{
 			i2c_handle->err_flag = I2C_ERROR_BERR;
-			i2c_stop(i2c_handle);
-		}
 	}
 }   	
 

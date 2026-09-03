@@ -254,19 +254,8 @@ void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 	// transaction INITIATED, not complete — async, caller polls state
 }
 
-i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+static void i2c_bus_recovery_GPIO_pins_config(i2c_handle_t *i2c_handle)
 {
-	/*
-		Retake SCL port as GPIO to manually produce CLOCK_RECOVERY_CYCLES
-		Then release the bus and arm I2C again
-	*/
-	i2c_status_t recovered;
-
-	recovered = I2C_BUS_UNRECOVERABLE;
-	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
-	rx_stream_dir->CR &= ~0x1; // disable stream — do this before reclaiming SCL/SDA
-	i2c_handle->i2c->CR1 &= ~(0x1); // Disable I2C peripheral to take control
-
 	i2c_handle->scl_port->MODER &= ~(0x3 << (i2c_handle->scl_pin * 2)); // General purpose output mode
 	i2c_handle->scl_port->MODER |= (0x1 << (i2c_handle->scl_pin * 2)); // General purpose output mode
 	i2c_handle->scl_port->OTYPER &= ~(0x1 << i2c_handle->scl_pin); // Output push-pull
@@ -280,7 +269,10 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	i2c_handle->sda_port->OTYPER &= ~(0x1 << i2c_handle->sda_pin); // Push-pull
 	i2c_handle->sda_port->PUPDR &= ~(0x3 << (i2c_handle->sda_pin * 2));
 	i2c_handle->sda_port->PUPDR |= (0x1 << (i2c_handle->sda_pin * 2)); // Pull up
+}
 
+static void i2c_bus_recovery_TIM_config(void)
+{
 	/*
 		Use TIM14 to toggle ODR value and generate a precise clock signal.
 	*/
@@ -290,10 +282,16 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	TIM14->SR &= ~0x1;	// clear any spurious UIF set by the EGR update above
 
 	TIM14->DIER &= ~0x1;  // no interrupt — we're polling CNT directly
-	TIM14->CR1 |= 0x1;   // free-running
+}
 
-	// Try the manual SCL toggle at least 3 times before giving up.
-	for (uint8_t i = 0; i < 3; i++)
+static i2c_status_t i2c_bus_recovery_procedure(i2c_handle_t *i2c_handle)
+{
+	i2c_status_t recovered;
+
+	recovered = I2C_ERROR;
+	i2c_handle->err_flag = I2C_ERROR_BUS_STUCK;
+	// Try the manual SCL toggle at least 2 times before giving up.
+	for (uint8_t i = 0; i < 2; i++)
 	{
 		for (uint8_t i = 0; i < I2C_CLOCK_RECOVERY_CYCLES; i++)
 		{
@@ -312,7 +310,6 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 			break; // SDA released early — no need to keep clocking
 	}
 
-	i2c_handle->err_flag = I2C_ERROR_BUS_STUCK;
 	// If bus is recovered, issue a STOP sequence
 	if (i2c_handle->sda_port->IDR & (1 << i2c_handle->sda_pin))
 	{
@@ -327,10 +324,15 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 		while (TIM14->CNT < I2C_HALF_PERIOD_RECOVERY_TICKS);
 		i2c_handle->sda_port->ODR |= (1 << i2c_handle->sda_pin); // SDA high while SCL high = STOP
 	}
+
+	return (recovered);
+}
+
+static i2c_status_t i2c_bus_recovery_peripheral_config(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+{
 	/*
-		After timer is stopped, re-init SCL, SDA port, I2C peripheral and TIM14
-	*/
-	TIM14->CR1 &= ~(0x1);   // Stop timer
+		After success or failure on bus recovery, try to re-config the peripherals.
+	*/	
 	if (i2c_GPIO_AF(i2c_handle->scl_port, i2c_handle->scl_pin) != I2C_OK)
 		return (I2C_ERROR);
 
@@ -345,19 +347,54 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 
 	if (i2c_setup(i2c_handle->i2c) != I2C_OK)
 		return (I2C_ERROR);
-	
-	// state will be handle by the outcome of this routine. I2C_IDLE or I2C_RECOVERY_FAILED
-	// err_flag will keep the last error trigger or CLEAR if bus was recovered
-
-	return (recovered);
+	return (I2C_OK);
 }
 
-void i2c_clear_recovery_failure(i2c_handle_t *i2c_handle)
+i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 {
 	/*
-		Call this whenever the BUS is recovered outside the driver's API bus recovery
-		procedures.
+		Retake SCL port as GPIO to manually produce CLOCK_RECOVERY_CYCLES
+		Then release the bus and arm I2C again
 	*/
-    if (i2c_handle->state == I2C_RECOVERY_FAILED)
-        i2c_handle->state = I2C_IDLE;
+	i2c_status_t recovered;
+	i2c_status_t periph_config;
+
+	DMA_Stream_TypeDef *rx_stream_dir = (DMA_Stream_TypeDef *)(DMA1_Stream0_BASE + (0x18UL * dma_handle->rx_stream));
+	rx_stream_dir->CR &= ~0x1; // disable stream — do this before reclaiming SCL/SDA
+	i2c_handle->i2c->CR1 &= ~(0x1); // Disable I2C peripheral to take control
+
+	i2c_bus_recovery_GPIO_pins_config(i2c_handle);
+	
+	i2c_bus_recovery_TIM_config();
+	TIM14->CR1 |= 0x1;   // free-running
+
+	recovered = i2c_bus_recovery_procedure(i2c_handle);
+	/*
+		After timer is stopped, re-init SCL, SDA port, I2C peripheral and TIM14
+	*/
+	TIM14->CR1 &= ~(0x1);   // Stop timer
+	periph_config = i2c_bus_recovery_peripheral_config(i2c_handle, dma_handle);
+	// state will be handle by the outcome of this routine. I2C_IDLE or I2C_BUS_UNAVAILABLE
+	// err_flag will keep the last error trigger or CLEAR if bus was recovered
+
+	return ((recovered == I2C_OK && periph_config == I2C_OK) ? I2C_OK : I2C_ERROR);
+}
+
+void clear_bus_unavailable(i2c_handle_t *i2c_handle)
+{
+	/*
+		Call this only after the bus has been physically recovered outside
+		this driver's own bus recovery routine (e.g. manual intervention,
+		slave power-cycled).
+
+		IMPORTANT: this function ONLY clears the I2C_BUS_UNAVAILABLE state.
+		It does NOT reconfigure any peripheral. The caller MUST call
+		i2c_init() again after this before issuing i2c_mem_read(), since
+		I2C_BUS_UNAVAILABLE can be caused either by an unrecoverable bus
+		(SDA never released) or by a peripheral re-configuration failure
+		inside i2c_bus_recovery() — in the latter case, I2C/DMA/TIM14
+		registers may be left in a partial/unknown state.
+	*/
+	if (i2c_handle->state == I2C_BUS_UNAVAILABLE)
+		i2c_handle->state = I2C_IDLE;
 }

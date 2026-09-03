@@ -36,7 +36,6 @@ typedef enum{
 	I2C_GPIO_CONFIG_ERROR,
 	I2C_DMA_CONFIG_ERROR,
 	I2C_TIM_CONFIG_ERROR,
-	I2C_BUS_UNRECOVERABLE,
 } i2c_status_t;
 
 typedef enum{
@@ -47,7 +46,7 @@ typedef enum{
 	I2C_RX_RSTART,
 	I2C_RX_SLAVE_ADDRESS,
 	I2C_RX_ACTIVE,
-	I2C_RECOVERY_FAILED,
+	I2C_BUS_UNAVAILABLE,
 } i2c_comm_state_t;
 
 typedef enum{
@@ -95,6 +94,6 @@ void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 /* PUBLIC API ENTRYS */
 i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-void i2c_clear_recovery_failure(i2c_handle_t *i2c_handle);
+void clear_bus_unavailable(i2c_handle_t *i2c_handle);
 
 #endif // I2C_DRIVER_H

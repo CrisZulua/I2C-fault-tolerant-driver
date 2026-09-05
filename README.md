@@ -8,7 +8,7 @@ Bare-metal, interrupt- and DMA-driven I2C driver for STM32F4, built around one p
 
 Most I2C drivers assume the happy path: address, ACK, transfer, done. In practice, I2C buses lock up — a slave resets mid-transaction and holds SDA low, a NACK shows up where you didn't expect one, noise trips a bus-error flag. ST's own HAL has limited answers for any of this beyond returning a generic timeout.
 
-This driver was built to close that gap: every transaction is watched by a hardware timeout, every I2C error interrupt (NACK, arbitration lost, bus error) is handled explicitly, and failures are retried with a bounded policy instead of hanging or failing silently. Bus recovery — physically un-sticking a wedged bus by bit-banging SCL — is designed and is the next piece to be implemented.
+This driver was built to close that gap: every transaction is watched by a hardware timeout, every I2C error interrupt (NACK, arbitration lost, bus error) is acknowledged, and failures are retried with a bounded policy instead of hanging or failing silently. Bus recovery — physically un-sticking a wedged bus by bit-banging SCL.
 
 ## Design goals
 
@@ -51,14 +51,36 @@ A transaction is a write phase (slave address, then register address) followed b
 - **Explicit I2C error interrupt handling** — NACK (AF), arbitration lost (ARLO), and bus error (BERR) are each detected, cleared, and routed through a decision, rather than left to a generic timeout.
 - **DMA transfer-error detection** on the RX stream, independent of the I2C peripheral's own error flags.
 - **Bounded retry policy** — `max_retrys` in the handle caps automatic retries; the driver reports failure instead of retrying forever against a bus that isn't coming back.
-- **Bus recovery** *(designed, implementation in progress)* — manual SCL toggling to release a slave stuck holding SDA low, followed by a clean peripheral reinit.
+- **Bus recovery** — manual SCL toggling to release a slave stuck holding SDA low, followed by a clean peripheral reinit.
 
-## Milestones
-- [x] Compilation using arm-none-eabi-gcc, CMSIS/LL, no HAL
-- [x] Full end-to-end test against a real slave device (BME280)
-- [ ] Fault-injection test harness to force NACK and stuck-bus scenarios
+## API Documentation
 
-## How to use
+This driver features a single master - multiple slave design, with one I2C 
+instance and one DMA stream/channel per handle. The caller is responsible for 
+configuring the handle with the correct peripheral, GPIO, and DMA stream/channel 
+for their chosen I2C instance.
+
+DMA is used for RX only; the write phase is a single register-address byte, so DMA setup/interrupt overhead isn't worth it for one byte. If you plan to use this driver for multibyte writes, feel free to extend it with a DMA-driven write phase.
+
+The driver is non-blocking and interrupt-driven; `i2c_mem_read()` returns immediately once the transaction is initiated, and completion is signaled asynchronously via `i2c_handle_t.state` returning to `I2C_IDLE`. The caller can poll this state or wait on a semaphore/event in an RTOS context.
+
+In case the `i2c_handle_t.state` returns `I2C_BUS_UNAVAILABLE`, the bus is wedged and the driver has attempted recovery. The recommended procedure once the channel returns to normal operation is to call `i2c_init()` + `i2c_clear_bus_unavailable()` to reinitialize the peripheral and clear the bus error state.
+
+### Structs
+
+```i2c_handle_t``` — configuration and state for one I2C instance
+
+```dma_handle_t``` — configuration and state for one DMA stream/channel
+
+### Functions
+
+```i2c_init(i2c_handle_t *i2c, dma_handle_t *dma)``` — initialize the I2C peripheral, GPIO, and RX DMA
+
+```i2c_mem_read(i2c_handle_t *i2c, dma_handle_t *dma)``` — initiate a register read transaction; returns immediately, completion is signaled asynchronously via `i2c->state` returning to `I2C_IDLE`
+
+```i2c_clear_bus_unavailable(i2c_handle_t *i2c)``` — clear the bus error state by setting it back to `I2C_IDLE`
+
+## Use Example
 
 > **⚠️ WARNING — External pull-up resistors required on SDA and SCL**
 >
@@ -103,25 +125,24 @@ i2c_mem_read(&i2c_handle, &dma_handle);
 // (I2C_IDLE), set from DMA interrupt context.
 ```
 
-Correct DMA stream/channel selection for the chosen I2C instance is the caller's responsibility — see the alternate function table in the STM32F446 datasheet.
-
-It is advised that i2c_bus_recovery() function is called at startup to ensure the bus is in a known good state before any transactions are attempted.
+>Correct DMA stream/channel selection for the chosen I2C instance is the caller's responsibility — see the alternate function table in the STM32F446 datasheet.
 
 ### Timeout tuning
 
 The watchdog is timer-driven, not a spin count, so it needs to be set against your actual clock tree:
 
 ```c
-#define APB1_TIM_CLK_HZ   50000000UL   // TIM14 input clock — check CubeMX "APB1 Timer clocks", not plain APB1
-#define TIMER_TICK_HZ     10000UL      // 10 kHz tick -> 100 us resolution
-#define TIMEOUT_CLK_CNT   300          // 300 * 100 us = 30 ms timeout, tune to your bus
+#define APB1_TIM_CLK_HZ 50000000U		// TIM14 input clock
+#define APB1_PERIPH_CLK_HZ 25000000U	// Peripheral clock in APB1
+#define TIMER_TICK_HZ 10000U			// 10 kHz -> 100 us per tick
+#define TIMEOUT_CLK_CNT 50U				// e.g. 50 * 100us = 5 ms timeout, tune to your bus
+#define I2C_SCL_FREQ_HZ 100000U			// 100 kHz Standard Mode
 ```
 
 ## Design decisions and trade-offs
 
 | Decision | Why |
 |---|---|
-| CMSIS/LL register access, no HAL | Every transaction step is visible and inspectable — the point of this project is understanding and controlling failure modes HAL abstracts away. |
 | Handle struct per instance | Same pattern HAL/LL use, for the same reason: one driver, any I2C instance, any DMA stream, no hardcoded globals. |
 | DMA used for RX only | The write phase is a single register-address byte — DMA setup/interrupt overhead isn't worth it for one byte; the multi-byte sensor read is where DMA earns its place. |
 | Async, interrupt-driven, not polling | The CPU is free during a transaction rather than blocked in a wait loop — the realistic pattern for anything power-conscious or doing other work concurrently. |
@@ -129,25 +150,7 @@ The watchdog is timer-driven, not a spin count, so it needs to be set against yo
 
 ## Status
 
-Actively testing against a **BME280** environmental sensor as the first real slave device.
-
-**Implemented and interrupt/DMA-driven end to end:**
-- Peripheral, GPIO, and DMA initialization
-- Full protocol state machine (address, register write, repeated start, DMA-driven multi- and single-byte read)
-- Watchdog timeout arm/disarm
-- AF / ARLO / BERR error detection with bounded retry
-
-**Not yet implemented:**
-- Fault-injection test suite (forced NACK / stuck-bus scenarios)
-
-**Descoped for now, may return later:**
-- Software payload checksum — cut to keep focus on bus-level fault handling rather than data-integrity-after-the-fact. The BME280 doesn't support SMBus PEC, so a wire-level checksum isn't possible with this sensor; a software checksum would only protect the payload after reception, not the transaction itself.
-
-## Roadmap
-
-1. Fault-injection test harness — force a stuck bus and a forced NACK, confirm recovery and bounded retry both behave as designed.
-2. Validate against the BME280 end to end (chip ID read, calibration read, measurement read).
-3. Low-power STOP-mode sampling (future, separate milestone).
+Testing has been done against a BME280 sensor. Results are being analyzed and results will be posted as soon as documentation is complete. The driver is not yet production-ready, but the design is complete and the implementation is functional.
 
 ## Resources
 

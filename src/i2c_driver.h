@@ -94,6 +94,6 @@ void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 /* PUBLIC API ENTRYS */
 i2c_status_t i2c_init(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 void i2c_mem_read(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-void clear_bus_unavailable(i2c_handle_t *i2c_handle);
+void i2c_clear_bus_unavailable(i2c_handle_t *i2c_handle);
 
 #endif // I2C_DRIVER_H

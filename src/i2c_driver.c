@@ -380,7 +380,7 @@ i2c_status_t i2c_bus_recovery(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle
 	return ((recovered == I2C_OK && periph_config == I2C_OK) ? I2C_OK : I2C_ERROR);
 }
 
-void clear_bus_unavailable(i2c_handle_t *i2c_handle)
+void i2c_clear_bus_unavailable(i2c_handle_t *i2c_handle)
 {
 	/*
 		Call this only after the bus has been physically recovered outside

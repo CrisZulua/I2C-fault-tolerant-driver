@@ -55,16 +55,19 @@ A transaction is a write phase (slave address, then register address) followed b
 
 ## API Documentation
 
-This driver features a single master - multiple slave design, with one I2C 
-instance and one DMA stream/channel per handle. The caller is responsible for 
-configuring the handle with the correct peripheral, GPIO, and DMA stream/channel 
-for their chosen I2C instance.
+This driver features a single master - multiple slave design, with one I2C instance and one DMA stream/channel per handle. The caller is 
+responsible for configuring the handle with the correct peripheral, GPIO, and DMA stream/channel for their chosen I2C instance.
 
-DMA is used for RX only; the write phase is a single register-address byte, so DMA setup/interrupt overhead isn't worth it for one byte. If you plan to use this driver for multibyte writes, feel free to extend it with a DMA-driven write phase.
+DMA is used for RX only; the write phase is a single register-address byte, so DMA setup/interrupt overhead isn't worth it for one byte. If you 
+plan to use this driver for multibyte writes, feel free to extend it with a DMA-driven write phase.
 
-The driver is non-blocking and interrupt-driven; `i2c_mem_read()` returns immediately once the transaction is initiated, and completion is signaled asynchronously via `i2c_handle_t.state` returning to `I2C_IDLE`. The caller can poll this state or wait on a semaphore/event in an RTOS context.
+The driver is non-blocking and interrupt-driven; `i2c_mem_read()` returns immediately once the transaction is initiated, and completion is 
+signaled asynchronously via `i2c_handle_t.state` returning to `I2C_IDLE`. The caller can poll this state or wait on a semaphore/event in an RTOS 
+context.
 
-In case the `i2c_handle_t.state` returns `I2C_BUS_UNAVAILABLE`, the bus is wedged and the driver has attempted recovery. The recommended procedure once the channel returns to normal operation is to call `i2c_init()` + `i2c_clear_bus_unavailable()` to reinitialize the peripheral and clear the bus error state.
+In case the `i2c_handle_t.state` returns `I2C_BUS_UNAVAILABLE`, the bus is wedged and the driver has attempted recovery. The recommended procedure 
+once the channel returns to normal operation is to call `i2c_init()` + `i2c_clear_bus_unavailable()` to reinitialize the peripheral and clear the 
+bus error state.
 
 ### Structs
 
@@ -139,6 +142,9 @@ The watchdog is timer-driven, not a spin count, so it needs to be set against yo
 #define I2C_SCL_FREQ_HZ 100000U			// 100 kHz Standard Mode
 ```
 
+Always account for the timeout to be ~1 tick longer than the actual timeout you want.
+E.g., if you define `TIMEOUT_CLK_CNT = 50`, the actual timeout is ~51 ticks, or ~5.1 ms at a 10 kHz tick rate.
+
 ## Design decisions and trade-offs
 
 | Decision | Why |
@@ -148,9 +154,33 @@ The watchdog is timer-driven, not a spin count, so it needs to be set against yo
 | Async, interrupt-driven, not polling | The CPU is free during a transaction rather than blocked in a wait loop — the realistic pattern for anything power-conscious or doing other work concurrently. |
 | Timer-based timeout, not a loop counter | A spin-counter has no relationship to real elapsed time and breaks entirely once the driver is non-blocking; a hardware timer is required once the CPU isn't sitting in the wait loop itself. |
 
-## Status
+## Tests & Validation
 
-Testing has been done against a BME280 sensor. Results are being analyzed and results will be posted as soon as documentation is complete. The driver is not yet production-ready, but the design is complete and the implementation is functional.
+The driver was validated on real hardware using an **STM32F446RE**, **I2C1** and a **BME280** sensor at **100 kHz** I2C bus speed. Timing measurements were performed using the **DWT cycle counter** at a 50 MHz CPU clock.
+
+The test campaign covers both normal operation and fault-handling scenarios:
+
+| Test                              | Result                                    |
+| --------------------------------- | ----------------------------------------- |
+| Normal single transaction         | ~392.8 µs to STOP                         |
+| 100 consecutive transactions      | **100/100 successful**                    |
+| Timing determinism                | **CV = 0.035%**                           |
+| AF / NACK detection               | **100/100 detected**                      |
+| Watchdog timeout                  | Verified at different tick configurations |
+| Bus recovery — SDA stuck low      | **100/100 correctly detected**            |
+| Bus recovery — successful release | **100/100 automatically recovered**       |
+
+### Key Results
+
+* Normal transactions showed an average execution time of **~392.8 µs**, close to the theoretical bus time of ~390 µs.
+* Timing measurements over 100 transactions showed highly deterministic behaviour, with a **0.035% coefficient of variation** and no significant drift or outliers.
+* Address failure (**AF/NACK**) was consistently detected in all 100 fault-injection attempts.
+* Watchdog behaviour was validated with different tick frequencies and timeout values, confirming the expected timeout mechanism and its timing margin.
+* The bus-recovery mechanism was tested both when **SDA remained permanently stuck low** and when the bus was successfully released during recovery.
+  For the complete test methodology, measurements, fault-injection setup and analysis, see:
+
+**[Detailed Test Analysis →](docs/TEST_ANALYSIS.md)**
+
 
 ## Resources
 

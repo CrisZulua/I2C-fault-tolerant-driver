@@ -14,6 +14,9 @@
 	is DOUBLE the PERIPHERAL clock on that same bus (RM0390). I2C1/2/3 are
 	peripherals, TIM14 is a timer, so these two values are NOT interchangeable
 	even though they both derive from APB1.
+
+	Note on TIMEOUT_CLK_CNT: Always account for the timeout to be longer by ~1 TIM14 tick
+	than the actual timeout you want.
 */
 #define APB1_TIM_CLK_HZ 50000000U		// TIM14 input clock
 #define APB1_PERIPH_CLK_HZ 25000000U	// Peripheral clock in APB1

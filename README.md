@@ -112,6 +112,7 @@ i2c_handle_t i2c_handle = {
 };
 
 dma_handle_t dma_handle = {
+    .rx_stream = DMA1_Stream0,
     .rx_stream_n = 0,
     .rx_channel_n = 1,
     .rx_buffer = buffer,

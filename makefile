@@ -22,7 +22,7 @@ BUILD_DIR = build
 OBJS_DIR = $(BUILD_DIR)/objs
 
 # Source files
-SRC = i2c_driver.c i2c_isr.c 
+SRC = i2c_driver.c i2c_config.c i2c_transaction.c i2c_recovery.c i2c_isr.c 
 OBJS = $(SRC:%.c=$(OBJS_DIR)/%.o)
 
 # Default target: compile to .o files without linking

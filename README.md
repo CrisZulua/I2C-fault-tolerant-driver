@@ -83,6 +83,12 @@ bus error state.
 
 ```i2c_clear_bus_unavailable(i2c_handle_t *i2c)``` — clear the bus error state by setting it back to `I2C_IDLE`
 
+```void (*callback)(uint8_t *buffer, uint32_t length)``` — optional callback
+invoked by `i2c_dma_rx_irq_handler()` after a successful RX DMA transfer. The
+callback receives `dma_handle->rx_buffer` and `dma_handle->rx_nb_transfers` as
+its buffer and byte-count arguments. It runs in DMA interrupt context, so it
+should be short and must not block. Pass `NULL` to disable the callback.
+
 ### Interrupt Handlers
 
 The driver exposes interrupt functions that must be called from the CMSIS
@@ -92,8 +98,9 @@ IRQ handlers for the configured I2C instance, DMA stream, and TIM14:
     start, address, transmit-buffer-empty, and byte-transfer-finished events.
     During the read phase it disables I2C buffer interrupts and arms RX DMA.
 - `i2c_dma_rx_irq_handler(...)` handles RX DMA transfer-complete and
-    transfer-error flags. A successful transfer stops the watchdog and completes
-    the transaction; a DMA error is recorded for timeout/error handling.
+    transfer-error flags. A successful transfer stops the watchdog, completes
+    the transaction, and invokes the callback with the received buffer and
+    byte count; a DMA error is recorded for timeout/error handling.
 - `i2c_er_irq_handler(...)` acknowledges I2C acknowledge-failure (NACK),
     arbitration-lost, and bus-error flags. NACK and arbitration loss abort the
     current transaction; bus errors are retried up to `max_retrys`.
@@ -161,6 +168,13 @@ i2c_mem_read(&i2c_handle, &dma_handle);
     I2C_IDLE, set from DMA Transfer Complete interrupt context.
 */
 
+void callback_function(uint8_t *buffer, uint32_t length)
+{
+    // Process the received bytes.
+    (void)buffer;
+    (void)length;
+}
+
 /* CMSIS IRQ wrappers for the configuration above. */
 void I2C1_EV_IRQHandler(void)
 {
@@ -174,7 +188,7 @@ void I2C1_ER_IRQHandler(void)
 
 void DMA1_Stream0_IRQHandler(void)
 {
-    i2c_dma_rx_irq_handler(&i2c_handle, &dma_handle);
+    i2c_dma_rx_irq_handler(&i2c_handle, &dma_handle, &callback_function);
 }
 
 void TIM8_TRG_COM_TIM14_IRQHandler(void)

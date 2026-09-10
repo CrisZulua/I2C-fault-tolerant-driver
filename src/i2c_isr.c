@@ -1,6 +1,6 @@
 #include "i2c_driver.h"
 
-void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
+void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle, void (*callback)(uint8_t *, uint32_t))
 {
 	static const uint8_t dma_flag_base[4] = {UINT8_C(0), UINT8_C(6), UINT8_C(16), UINT8_C(22)};
 
@@ -33,6 +33,8 @@ void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle)
 			TIM14->SR &= ~UINT32_C(1);
 			i2c_stop(i2c_handle);
 			i2c_handle->state = I2C_IDLE; // IDLE signals a transaction completed and the bus is free
+			if (callback != NULL)
+				callback((uint8_t *)dma_handle->rx_buffer, dma_handle->rx_nb_transfers);
 		}
 	}
 }

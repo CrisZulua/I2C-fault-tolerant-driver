@@ -110,7 +110,7 @@ extern void i2c_clear_bus_unavailable(i2c_handle_t *i2c_handle);
 
 /* Interrupt Handlers - Wrap this functions inside CMSIS IRQ_Handlers */
 extern void i2c_ev_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
-extern void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
+extern void i2c_dma_rx_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle, void (*callback)(uint8_t *, uint32_t));
 extern void i2c_er_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 extern void i2c_tim_irq_handler(i2c_handle_t *i2c_handle, dma_handle_t *dma_handle);
 

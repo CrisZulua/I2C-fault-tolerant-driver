@@ -83,6 +83,30 @@ bus error state.
 
 ```i2c_clear_bus_unavailable(i2c_handle_t *i2c)``` — clear the bus error state by setting it back to `I2C_IDLE`
 
+### Interrupt Handlers
+
+The driver exposes interrupt functions that must be called from the CMSIS
+IRQ handlers for the configured I2C instance, DMA stream, and TIM14:
+
+- `i2c_ev_irq_handler(...)` advances the I2C transaction state machine for
+    start, address, transmit-buffer-empty, and byte-transfer-finished events.
+    During the read phase it disables I2C buffer interrupts and arms RX DMA.
+- `i2c_dma_rx_irq_handler(...)` handles RX DMA transfer-complete and
+    transfer-error flags. A successful transfer stops the watchdog and completes
+    the transaction; a DMA error is recorded for timeout/error handling.
+- `i2c_er_irq_handler(...)` acknowledges I2C acknowledge-failure (NACK),
+    arbitration-lost, and bus-error flags. NACK and arbitration loss abort the
+    current transaction; bus errors are retried up to `max_retrys`.
+- `i2c_tim_irq_handler(...)` handles the TIM14 watchdog expiry, stops the
+    transaction, and invokes bus recovery when the bus is suspected to be stuck.
+    If recovery cannot release the bus, the state becomes
+    `I2C_BUS_UNAVAILABLE`.
+
+The handles must remain accessible from interrupt context, so they are usually
+declared at file scope. The wrapper names below are for the `I2C1`,
+`DMA1_Stream0`, and `TIM14` configuration used in the example; use the CMSIS
+vector names matching a different peripheral or DMA stream.
+
 ## Use Example
 
 > **⚠️ WARNING — External pull-up resistors required on SDA and SCL**
@@ -123,10 +147,40 @@ if (i2c_init(&i2c_handle, &dma_handle) != I2C_OK) {
     // handle initialization error
 }
 
+
+/* 
+    In case you want to read multiple bytes - update i2c and dma handle and
+    initiate a new transaction.
+*/
+i2c_handle.slave_reg = 0xF7; // e.g. BME280 pressure MSB register
+dma_handle.rx_nb_transfers = 3; // read 3 bytes (pressure MSB, LSB, XLSB)
 i2c_mem_read(&i2c_handle, &dma_handle);
-// Returns once the transaction is INITIATED, not complete.
-// Completion is signaled asynchronously via i2c_handle.state coming back to IDLE
-// (I2C_IDLE), set from DMA interrupt context.
+/*
+    Returns once the transaction is INITIATED, not complete.
+    Completion is signaled asynchronously via i2c_handle.state coming back to 
+    I2C_IDLE, set from DMA Transfer Complete interrupt context.
+*/
+
+/* CMSIS IRQ wrappers for the configuration above. */
+void I2C1_EV_IRQHandler(void)
+{
+    i2c_ev_irq_handler(&i2c_handle, &dma_handle);
+}
+
+void I2C1_ER_IRQHandler(void)
+{
+    i2c_er_irq_handler(&i2c_handle, &dma_handle);
+}
+
+void DMA1_Stream0_IRQHandler(void)
+{
+    i2c_dma_rx_irq_handler(&i2c_handle, &dma_handle);
+}
+
+void TIM8_TRG_COM_TIM14_IRQHandler(void)
+{
+    i2c_tim_irq_handler(&i2c_handle, &dma_handle);
+}
 ```
 
 >Correct DMA stream/channel selection for the chosen I2C instance is the caller's responsibility — see the alternate function table in the STM32F446 datasheet.

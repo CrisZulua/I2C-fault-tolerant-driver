@@ -86,8 +86,8 @@ bus error state.
 ```void (*callback)(uint8_t *buffer, uint32_t length)``` — optional callback
 invoked by `i2c_dma_rx_irq_handler()` after a successful RX DMA transfer. The
 callback receives `dma_handle->rx_buffer` and `dma_handle->rx_nb_transfers` as
-its buffer and byte-count arguments. It runs in DMA interrupt context, so it
-should be short and must not block. Pass `NULL` to disable the callback.
+its buffer and byte-count arguments. It runs in DMA interrupt context, so
+it should be short and must not block. Pass `NULL` to disable the callback.
 
 ### Interrupt Handlers
 
